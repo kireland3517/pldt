@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useCallback } from 'react'
 import { tagPhoto } from '../api'
 
 const ROOM_ZONES = [
@@ -27,12 +27,13 @@ const ROOM_ZONES = [
 const CONDITIONS = ['good', 'fair', 'poor', 'failed', 'unknown']
 const SEVERITIES = ['none', 'low', 'medium', 'high']
 
-// Components whose absence at low confidence should always prompt the seller
 const ALWAYS_COMMON = new Set([
   'ROOF-01','FND-01','WIN-01','XDR-01','LAND-01','HVAC-01','WH-HTR-01',
   'ELEC-01','PLMB-01','DET-01','FLR-01','PNT-01','KIT-01','BTHP-01',
   'DECK-01','PRCH-01','GAR-01','GUT-01','VENT-01',
 ])
+
+// ---- helpers ----------------------------------------------------------------
 
 function initEditedTag(raw) {
   return {
@@ -54,12 +55,89 @@ function fieldEdited(tag) {
   )
 }
 
+// Resize to max 1600px on longest side; returns a new File (JPEG 85%)
+async function downscale(file, maxPx = 1600) {
+  return new Promise((resolve) => {
+    const img = new Image()
+    const blobUrl = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(blobUrl)
+      const { naturalWidth: w, naturalHeight: h } = img
+      if (w <= maxPx && h <= maxPx) { resolve(file); return }
+      const scale = maxPx / Math.max(w, h)
+      const canvas = document.createElement('canvas')
+      canvas.width  = Math.round(w * scale)
+      canvas.height = Math.round(h * scale)
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+      canvas.toBlob(
+        blob => resolve(new File([blob], file.name, { type: 'image/jpeg' })),
+        'image/jpeg', 0.85
+      )
+    }
+    img.onerror = () => { URL.revokeObjectURL(blobUrl); resolve(file) }
+    img.src = blobUrl
+  })
+}
+
+// Retry fn up to maxAttempts times with exponential backoff (1s, 2s, 4s)
+async function withRetry(fn, maxAttempts = 3) {
+  let lastErr
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try { return await fn() }
+    catch (err) {
+      lastErr = err
+      if (attempt < maxAttempts - 1) {
+        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)))
+      }
+    }
+  }
+  throw lastErr
+}
+
+// ---- component --------------------------------------------------------------
+
 export default function PhotoStep({ sessionId, onDone }) {
   const [photos, setPhotos]               = useState([])
   const [unconfirmedAnswers, setUnconfirmedAnswers] = useState({})
   const inputRef = useRef()
 
-  // ---------- file selection ----------
+  // Sequential queue: { idx, file, room_zone }[]
+  const queueRef   = useRef([])
+  const runningRef = useRef(false)
+
+  // ---- queue drain ----------------------------------------------------------
+  const drainQueue = useCallback(async () => {
+    if (runningRef.current) return
+    const item = queueRef.current.shift()
+    if (!item) return
+    runningRef.current = true
+
+    const { idx, file, room_zone } = item
+
+    // Mark tagging
+    setPhotos(prev => prev.map((p, i) =>
+      i === idx ? { ...p, status: 'tagging', error: null } : p
+    ))
+
+    try {
+      const small  = await downscale(file)
+      const result = await withRetry(() => tagPhoto(sessionId, small, room_zone), 3)
+      const editedTags = result.tags.map(initEditedTag)
+      setPhotos(prev => prev.map((p, i) =>
+        i === idx ? { ...p, status: 'done', rawTags: result.tags, editedTags, error: null } : p
+      ))
+    } catch (err) {
+      setPhotos(prev => prev.map((p, i) =>
+        i === idx ? { ...p, status: 'error', error: err.message } : p
+      ))
+    }
+
+    runningRef.current = false
+    // Process next item in queue (if any)
+    if (queueRef.current.length > 0) drainQueue()
+  }, [sessionId])
+
+  // ---- file selection -------------------------------------------------------
   function handleFiles(e) {
     const files = Array.from(e.target.files)
     if (!files.length) return
@@ -76,38 +154,32 @@ export default function PhotoStep({ sessionId, onDone }) {
     e.target.value = ''
   }
 
-  // ---------- room assignment ----------
+  // ---- room assignment → enqueue -------------------------------------------
   function setRoom(idx, room_zone) {
-    setPhotos(prev => {
-      const updated = prev.map((p, i) => i === idx ? { ...p, room_zone } : p)
-      // auto-start tagging once room is chosen
-      if (room_zone) tagOne(updated[idx].file, room_zone, idx)
-      return updated
-    })
-  }
-
-  // ---------- vision tagging ----------
-  async function tagOne(file, room_zone, idx) {
-    setPhotos(prev => prev.map((p, i) => i === idx ? { ...p, status: 'tagging' } : p))
-    try {
-      const result = await tagPhoto(sessionId, file, room_zone)
-      const editedTags = result.tags.map(initEditedTag)
-      setPhotos(prev => prev.map((p, i) =>
-        i === idx ? { ...p, status: 'done', rawTags: result.tags, editedTags, error: null } : p
-      ))
-    } catch (err) {
-      setPhotos(prev => prev.map((p, i) =>
-        i === idx ? { ...p, status: 'error', error: err.message } : p
-      ))
+    setPhotos(prev => prev.map((p, i) => i === idx ? { ...p, room_zone } : p))
+    if (room_zone) {
+      // Get the file from current state
+      setPhotos(prev => {
+        const file = prev[idx].file
+        queueRef.current.push({ idx, file, room_zone })
+        drainQueue()
+        return prev
+      })
     }
   }
 
+  // ---- manual retry --------------------------------------------------------
   function retag(idx) {
-    const p = photos[idx]
-    if (p.room_zone) tagOne(p.file, p.room_zone, idx)
+    setPhotos(prev => {
+      const p = prev[idx]
+      if (!p.room_zone) return prev
+      queueRef.current.push({ idx, file: p.file, room_zone: p.room_zone })
+      drainQueue()
+      return prev
+    })
   }
 
-  // ---------- table edits ----------
+  // ---- table edits ---------------------------------------------------------
   function editTag(photoIdx, tagIdx, field, value) {
     setPhotos(prev => prev.map((p, pi) => {
       if (pi !== photoIdx) return p
@@ -121,20 +193,21 @@ export default function PhotoStep({ sessionId, onDone }) {
     }))
   }
 
-  // ---------- unconfirmed-absence panel ----------
-  // After all photos done: find components that were never tagged present
+  // ---- derived state -------------------------------------------------------
   const allDone = photos.length > 0 && photos.every(p => p.status === 'done' || p.status === 'error')
   const allEditedTags = photos.flatMap(p => p.editedTags)
-  const presentCids = new Set(allEditedTags.filter(t => t.present).map(t => t.component_id))
   const lowConfAbsent = allEditedTags
     .filter(t => !t.present && t.confidence < 0.75)
     .map(t => t.component_id)
   const untaggedAlways = [...ALWAYS_COMMON].filter(cid => !allEditedTags.some(t => t.component_id === cid))
   const unconfirmedCids = [...new Set([...lowConfAbsent, ...untaggedAlways])]
 
-  // ---------- continue ----------
+  // queue depth for status line
+  const queueDepth = queueRef.current.length
+  const taggingCount = photos.filter(p => p.status === 'tagging').length
+
+  // ---- continue ------------------------------------------------------------
   function handleContinue() {
-    // Raw photo_tags for capture payload (vision's original output in legacy format)
     const photoTagsForCapture = photos.flatMap(p =>
       p.rawTags.map(t => ({
         component_id: t.component_id,
@@ -144,7 +217,6 @@ export default function PhotoStep({ sessionId, onDone }) {
       }))
     )
 
-    // Seller confirmed tags — only fields the seller actually changed
     const sellerConfirmedTags = []
     for (const t of allEditedTags) {
       const entry = { component_id: t.component_id }
@@ -156,7 +228,6 @@ export default function PhotoStep({ sessionId, onDone }) {
       if (hasEdit) sellerConfirmedTags.push(entry)
     }
 
-    // Unconfirmed-absence panel answers → presence for downstream questionnaire
     const absencePresenceAnswers = Object.entries(unconfirmedAnswers).map(([cid, val]) => ({
       question_id: `P-UNCONFIRMED-${cid}`,
       component_id: cid,
@@ -166,17 +237,26 @@ export default function PhotoStep({ sessionId, onDone }) {
     onDone({ photoTagsForCapture, sellerConfirmedTags, absencePresenceAnswers })
   }
 
+  // ---- render --------------------------------------------------------------
   return (
     <div>
       <h2 style={{ fontSize: 16, marginBottom: 8 }}>Upload Photos</h2>
       <p style={{ fontSize: 13, color: '#555', marginBottom: 16 }}>
-        Label each photo with its room before uploading. Vision tags condition only —
-        you review and correct every field. Your corrections override vision.
+        Label each photo with its room. Photos are sent one at a time and downscaled before upload.
+        Vision tags condition only — you review and correct every field.
       </p>
 
       <input ref={inputRef} type="file" accept="image/*" multiple
         style={{ display: 'none' }} onChange={handleFiles} />
       <button style={btnStyle} onClick={() => inputRef.current.click()}>Add photos</button>
+
+      {/* Queue status */}
+      {(taggingCount > 0 || queueDepth > 0) && (
+        <p style={{ fontSize: 12, color: '#555', marginTop: 8 }}>
+          Tagging in progress — processing one at a time.
+          {queueDepth > 0 && ` ${queueDepth} photo${queueDepth !== 1 ? 's' : ''} waiting in queue.`}
+        </p>
+      )}
 
       {photos.map((p, pi) => (
         <div key={pi} style={cardStyle}>
@@ -186,7 +266,6 @@ export default function PhotoStep({ sessionId, onDone }) {
               {p.file.name}
             </div>
 
-            {/* Room picker */}
             <label style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
               Room:{' '}
               <select value={p.room_zone} onChange={e => setRoom(pi, e.target.value)}
@@ -197,11 +276,16 @@ export default function PhotoStep({ sessionId, onDone }) {
             </label>
 
             {p.status === 'needs_room' && <span style={badge('gray')}>Pick a room to start tagging</span>}
-            {p.status === 'tagging'    && <span style={badge('blue')}>Tagging with vision...</span>}
+            {p.status === 'tagging'    && <span style={badge('blue')}>Tagging… (downscaled, retries enabled)</span>}
             {p.status === 'error'      && (
               <div>
-                <span style={{ color: 'red', fontSize: 12 }}>Error: {p.error}</span>
-                <button style={{ marginLeft: 8, fontSize: 11 }} onClick={() => retag(pi)}>Retry</button>
+                <span style={{ color: '#c00', fontSize: 12 }}>
+                  Failed after 3 attempts: {p.error}
+                </span>
+                <button style={{ marginLeft: 8, fontSize: 11, cursor: 'pointer' }}
+                  onClick={() => retag(pi)}>
+                  Retry
+                </button>
               </div>
             )}
 
@@ -215,9 +299,13 @@ export default function PhotoStep({ sessionId, onDone }) {
                     {p.editedTags.filter(t => t.seller_confirmed).length} corrected
                   </span>
                 )}
+                <button style={{ marginLeft: 8, fontSize: 11, cursor: 'pointer' }}
+                  onClick={() => retag(pi)}>
+                  Re-tag
+                </button>
 
                 {p.editedTags.length === 0
-                  ? <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>Nothing detected. Change room or add notes below.</p>
+                  ? <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>Nothing detected. Change room or re-tag.</p>
                   : (
                     <table style={tableStyle}>
                       <thead>
@@ -312,7 +400,8 @@ export default function PhotoStep({ sessionId, onDone }) {
 
       <div style={{ marginTop: 20 }}>
         {photos.length === 0 && (
-          <button style={{ ...btnStyle, background: '#eee', marginRight: 8 }} onClick={() => onDone({ photoTagsForCapture: [], sellerConfirmedTags: [], absencePresenceAnswers: [] })}>
+          <button style={{ ...btnStyle, background: '#eee', marginRight: 8 }}
+            onClick={() => onDone({ photoTagsForCapture: [], sellerConfirmedTags: [], absencePresenceAnswers: [] })}>
             Skip photos
           </button>
         )}
@@ -323,7 +412,7 @@ export default function PhotoStep({ sessionId, onDone }) {
         )}
         {photos.length > 0 && !allDone && (
           <p style={{ fontSize: 13, color: '#888', marginTop: 8 }}>
-            Waiting for all photos to finish tagging...
+            Waiting for all photos to finish tagging…
           </p>
         )}
       </div>
