@@ -1,0 +1,61 @@
+{
+  "_note": "VERIFY all rates against current SC statute/local practice before build. Values are best-known seed.",
+  "attorney_closing_fee": {
+    "low": 450,
+    "high": 900,
+    "note": "SC requires attorney-supervised closing (Matrix rulings). Seller's side."
+  },
+  "deed_recording_fee": {
+    "flat": 15,
+    "note": "County Register of Deeds; confirm per-page."
+  },
+  "sc_transfer_tax": {
+    "rate_per_500": 1.85,
+    "basis": "sale_price",
+    "customarily_paid_by": "seller",
+    "note": "SC deed recording fee/transfer tax ~ $1.85 per $500 (state $1.30 + county $0.55). VERIFY current rate."
+  },
+  "title_insurance_owner": {
+    "note": "Owner's policy custom varies; often buyer or negotiated. Model as optional seller cost."
+  },
+  "property_tax_proration": {
+    "owner_occupied_ratio": 0.04,
+    "other_or_second_home_ratio": 0.06,
+    "note": "SC assessment ratio: 4% owner-occupied legal residence, 6% other. Choose by assessment status. Prorate with county millage."
+  },
+  "survey": {
+    "low": 400,
+    "high": 800,
+    "note": "Varies by lender/buyer requirement."
+  },
+  "cl100_termite_letter": {
+    "low": 75,
+    "high": 150,
+    "note": "Wood-infestation report. Common in SC, esp. FHA/VA. Crawlspace moisture raises risk."
+  },
+  "hoa_estoppel_transfer": {
+    "low": 100,
+    "high": 400,
+    "note": "Ask whether the property has an HOA. If so, confirm the estoppel/transfer fee with the seller or the HOA. Do not assume an HOA exists."
+  },
+  "commission": {
+    "default_rate": 0.06,
+    "adjustable": true,
+    "note": "Never hard-code; expose as input."
+  },
+  "seller_concession": {
+    "note": "Modeled as alternative to repair where credit is the better path."
+  },
+  "carrying_costs_monthly": {
+    "components": [
+      "mortgage_payment",
+      "property_tax",
+      "insurance",
+      "utilities_vacant"
+    ],
+    "note": "Applied across estimated DOM. Vacant-home utilities included."
+  },
+  "permits": {
+    "note": "Per-jurisdiction. Flag which recommended work needs a permit; unpermitted past work can surface at closing/disclosure. Static per-jurisdiction reference (TODO)."
+  }
+}

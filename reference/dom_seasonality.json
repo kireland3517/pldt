@@ -1,0 +1,28 @@
+{
+  "_note": "VERIFY base_dom against a trusted local figure. Flagged as estimate in-product until MLS.",
+  "market": "Simpsonville / Greenville County SC (29680)",
+  "base_dom_days": 60,
+  "source": "Seed from public market reports (Redfin/Zillow ranged 57-88; using 60 as working baseline).",
+  "condition_multiplier": {
+    "move_in_ready": 0.7,
+    "average": 1.0,
+    "as_is_with_defects": 1.4,
+    "note": "Multiplies base_dom. Move-in-ready sells faster; visible defects slower."
+  },
+  "seasonality_factor": {
+    "jan": 1.15,
+    "feb": 1.1,
+    "mar": 0.95,
+    "apr": 0.85,
+    "may": 0.8,
+    "jun": 0.8,
+    "jul": 0.85,
+    "aug": 0.9,
+    "sep": 0.95,
+    "oct": 1.05,
+    "nov": 1.15,
+    "dec": 1.2,
+    "note": "Multiplies base_dom by listing month. Spring/summer faster. Summer buyers expect move-in-ready: a clean home sells faster, a rough one slower (interacts with condition_multiplier)."
+  },
+  "carrying_cost_link": "estimated_dom drives carrying_costs_monthly in net proceeds; a slower plan can net less than a faster pricier one."
+}

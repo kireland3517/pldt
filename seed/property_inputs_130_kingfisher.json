@@ -1,0 +1,98 @@
+{
+  "_note": "What the tool legitimately has at the START of a run for this property. NO condition, NO as-is range, NO chosen paths. Those must be produced by the tool.",
+  "address": "130 Kingfisher Dr, Simpsonville, SC 29680",
+  "public_county_facts": {
+    "subdivision": "River Ridge",
+    "county": "Greenville",
+    "beds": 3,
+    "baths": 2,
+    "sqft": 2019,
+    "lot_acres": 0.35,
+    "lot_sqft": 15377,
+    "year_built": 1999,
+    "garage": "2-car attached",
+    "annual_tax": 3446,
+    "last_sale_price": 170000,
+    "last_sale_date": "2017-12-28",
+    "assessment_status_note": "Confirm 4% owner-occupied vs 6% for proration."
+  },
+  "fetched_avms": {
+    "attom": 276810,
+    "redfin": 282986,
+    "zillow": 290500,
+    "realtor": 296945
+  },
+  "fetched_comps": [
+    {
+      "address": "4 Kingfisher Dr",
+      "beds": 3,
+      "baths": 2,
+      "sqft": 1891,
+      "built": 1996,
+      "sold": "2026-04",
+      "price": 289000,
+      "ppsf": 153,
+      "list_pct": 100
+    },
+    {
+      "address": "102 Blue Heron Cir",
+      "beds": 4,
+      "baths": 2,
+      "sqft": 2290,
+      "built": 2017,
+      "sold": "2026-04",
+      "price": 319900,
+      "ppsf": 140,
+      "list_pct": 96,
+      "note": "newer build"
+    },
+    {
+      "address": "307 Blue Heron Cir",
+      "beds": 3,
+      "baths": 2,
+      "sqft": 1782,
+      "built": 2007,
+      "sold": "2025-12",
+      "price": 301000,
+      "ppsf": 169,
+      "list_pct": 99
+    },
+    {
+      "address": "2 Turnstone Ct",
+      "beds": 3,
+      "baths": 2,
+      "sqft": 1238,
+      "built": 1999,
+      "sold": "2025-09",
+      "price": 252000,
+      "ppsf": 204,
+      "list_pct": 100
+    },
+    {
+      "address": "305 Kingfisher Dr",
+      "beds": 3,
+      "baths": 2,
+      "sqft": 1382,
+      "built": 2000,
+      "sold": "2024-04",
+      "price": 265000,
+      "ppsf": 192
+    },
+    {
+      "address": "413 Kingfisher Dr",
+      "beds": 4,
+      "baths": 2,
+      "sqft": 1526,
+      "built": 2002,
+      "sold": "2024-02",
+      "price": 285000,
+      "ppsf": 187
+    }
+  ],
+  "seller_frontdoor_constraints": {
+    "mortgage_payoff": 150000,
+    "occupancy": "vacant",
+    "timeline": "flexible",
+    "pay_repairs_up_front": true
+  }
+}

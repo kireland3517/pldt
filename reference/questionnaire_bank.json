@@ -1,0 +1,254 @@
+{
+  "_note": "Two layers. PRESENCE questions establish which library components this house has (the tool starts blind). CONDITION questions assess components confirmed present, filling gaps photos cannot resolve. Then constraints intake.",
+  "questions": [
+    {
+      "question_id": "Q-INSP",
+      "prompt": "Do you have a home inspection report?",
+      "answer_type": "yes_no",
+      "triggers": "intake_condition_start",
+      "branches": {
+        "yes": "upload_report",
+        "no": "photos_then_questionnaire_lower_confidence"
+      },
+      "tightens": "all_condition_estimates",
+      "maps_to": null
+    },
+    {
+      "question_id": "Q-DECK-1",
+      "prompt": "Is the deck structure (posts, joists) sound?",
+      "answer_type": "yes_no",
+      "triggers": "DECK-01 present",
+      "branches": {
+        "yes": "Q-DECK-2",
+        "no": "force_replace"
+      },
+      "tightens": "DECK-01 repair_vs_replace",
+      "maps_to": "DECK-01"
+    },
+    {
+      "question_id": "Q-DECK-2",
+      "prompt": "Are more than a quarter of the deck boards soft or rotten?",
+      "answer_type": "yes_no",
+      "triggers": "Q-DECK-1=yes",
+      "branches": {
+        "yes": "lean_replace",
+        "no": "Q-DECK-3"
+      },
+      "tightens": "DECK-01 repair_vs_replace",
+      "maps_to": "DECK-01"
+    },
+    {
+      "question_id": "Q-DECK-3",
+      "prompt": "Are the railings loose or are risers open?",
+      "answer_type": "yes_no",
+      "triggers": "Q-DECK-2=no",
+      "branches": {
+        "yes": "repair_required_safety",
+        "no": "repair_optional"
+      },
+      "tightens": "DECK-01 floor_membership",
+      "maps_to": "DECK-01"
+    },
+    {
+      "question_id": "Q-GAR-1",
+      "prompt": "Does the garage door open and close normally on its own power?",
+      "answer_type": "single_select",
+      "options": [
+        "works_normally",
+        "does_not_work",
+        "works_but_damaged"
+      ],
+      "triggers": "GAR-01 present (always ask when a garage door exists)",
+      "branches": {
+        "works_normally": "not_floor",
+        "does_not_work": "floor_eligible_replace_or_repair",
+        "works_but_damaged": "floor_eligible_assess"
+      },
+      "tightens": "GAR-01 repair_vs_replace",
+      "maps_to": "GAR-01"
+    },
+    {
+      "question_id": "Q-CRAWL-1",
+      "prompt": "Is there standing water in the crawlspace now, or only past moisture?",
+      "answer_type": "single_select",
+      "options": [
+        "standing_water_now",
+        "past_moisture_only",
+        "unsure"
+      ],
+      "triggers": "FND-01 present (crawlspace)",
+      "branches": {
+        "standing_water_now": "floor_required_get_quote",
+        "past_moisture_only": "repair_level",
+        "unsure": "recommend_assessment"
+      },
+      "tightens": "FND-01 floor_membership",
+      "maps_to": "FND-01"
+    },
+    {
+      "question_id": "Q-KIT-1",
+      "prompt": "Are the kitchen cabinet boxes solid, even if the fronts look dated?",
+      "answer_type": "yes_no",
+      "triggers": "KIT-01 present",
+      "branches": {
+        "yes": "lean_refresh",
+        "no": "consider_replace"
+      },
+      "tightens": "KIT-01 repair_vs_replace",
+      "maps_to": "KIT-01"
+    },
+    {
+      "question_id": "Q-VAN-1",
+      "prompt": "Is the primary bath vanity original and dated?",
+      "answer_type": "yes_no",
+      "triggers": "BTHP-01 present",
+      "branches": {
+        "yes": "replace_defensible",
+        "no": "refresh"
+      },
+      "tightens": "BTHP-01 repair_vs_replace",
+      "maps_to": "BTHP-01"
+    },
+    {
+      "question_id": "Q-SMOKE-1",
+      "prompt": "Is there cigarette or other heavy smoke odor in the home?",
+      "answer_type": "yes_no",
+      "triggers": "intake_condition",
+      "branches": {
+        "yes": "remediation_and_duct_floor_required",
+        "no": "standard_paint_optional"
+      },
+      "tightens": "REM-01 scope",
+      "maps_to": ["REM-01", "DUCT-01"],
+      "note": "Heavy smoke triggers BOTH REM-01 (remediation) and DUCT-01 (duct cleaning) as Floor-eligible."
+    },
+    {
+      "question_id": "Q-ELEC-1",
+      "prompt": "In the attic or around the electrical panel, do you see any exposed wires, open boxes without covers, or missing outlet/switch cover plates?",
+      "answer_type": "yes_no",
+      "triggers": "ELEC-01 present (always ask)",
+      "branches": {
+        "yes": "floor_eligible_safety",
+        "no": "not_floor"
+      },
+      "tightens": "ELEC-01 floor_membership",
+      "maps_to": "ELEC-01",
+      "note": "Blind-tool limit: hidden junction boxes may not be seller-visible. This catches what is visible; an inspection catches the rest. Confidence flagged lower without inspection."
+    },
+    {
+      "question_id": "Q-PRCH-1",
+      "prompt": "On the porch or deck stairs, are any handrails loose or missing, or are there open gaps between the steps?",
+      "answer_type": "yes_no",
+      "triggers": "PRCH-01 or DECK-01 present",
+      "branches": {
+        "yes": "floor_eligible_safety",
+        "no": "not_floor"
+      },
+      "tightens": "PRCH-01 floor_membership",
+      "maps_to": "PRCH-01",
+      "note": "Railing/riser hazards are FHA/VA safety items. If DECK-01 and PRCH-01 share one staircase, capture.py sets shared_structure so floor.py counts the cost once."
+    }
+  ],
+  "constraints_intake": [
+    {
+      "question_id": "C-PAYOFF",
+      "prompt": "Roughly what's left on your mortgage?",
+      "answer_type": "range",
+      "help": "Include everything owed against the home: first mortgage, second, HELOC, liens. Unpaid property taxes or judgments belong here too."
+    },
+    {
+      "question_id": "C-FUND-1",
+      "prompt": "Could you pay for repairs up front?",
+      "answer_type": "yes_no",
+      "branches": {
+        "yes": "proceed",
+        "no": "C-FUND-2"
+      }
+    },
+    {
+      "question_id": "C-FUND-2",
+      "prompt": "Are you prepared to finance the cost of repairs?",
+      "answer_type": "yes_no",
+      "branches": {
+        "yes": "proceed",
+        "no": "strong_recommendation_no_sale_proceeds_framing"
+      }
+    },
+    {
+      "question_id": "C-TIMELINE",
+      "prompt": "How soon do you need to sell?",
+      "answer_type": "single_select",
+      "options": ["asap", "1-3 months", "3-6 months", "flexible"],
+      "feeds": "dom_and_seasonality"
+    }
+  ],
+  "presence_questions": [
+    {
+      "question_id": "P-DECK",
+      "prompt": "Does your home have a deck or raised porch?",
+      "answer_type": "yes_no",
+      "maps_to": "DECK-01"
+    },
+    {
+      "question_id": "P-CRAWL",
+      "prompt": "Does your home sit on a crawlspace, basement, or slab?",
+      "answer_type": "single_select",
+      "options": ["crawlspace", "basement", "slab"],
+      "maps_to": "FND-01"
+    },
+    {
+      "question_id": "P-FIRE",
+      "prompt": "Is there a fireplace?",
+      "answer_type": "yes_no",
+      "maps_to": "FIRE-01"
+    },
+    {
+      "question_id": "P-GARAGE",
+      "prompt": "Is there a garage with a powered door?",
+      "answer_type": "yes_no",
+      "maps_to": "GAR-01"
+    },
+    {
+      "question_id": "P-BATHS",
+      "prompt": "How many bathrooms, and which is the primary?",
+      "answer_type": "single_select",
+      "options": ["1", "2", "3+"],
+      "maps_to": ["BTHP-01", "BTHS-01"]
+    },
+    {
+      "question_id": "P-HVAC-AGE",
+      "prompt": "Roughly how old is the heating and cooling system?",
+      "answer_type": "single_select",
+      "options": ["0-5", "6-10", "11-15", "15+", "unknown"],
+      "maps_to": "HVAC-01"
+    },
+    {
+      "question_id": "P-WH-AGE",
+      "prompt": "Roughly how old is the water heater?",
+      "answer_type": "single_select",
+      "options": ["0-5", "6-10", "10+", "unknown"],
+      "maps_to": "WH-HTR-01"
+    },
+    {
+      "question_id": "P-ROOF-AGE",
+      "prompt": "Roughly how old is the roof?",
+      "answer_type": "single_select",
+      "options": ["0-5", "6-15", "15+", "unknown"],
+      "maps_to": "ROOF-01"
+    },
+    {
+      "question_id": "P-PORCH",
+      "prompt": "Is there a front porch or exterior stairs with railings?",
+      "answer_type": "yes_no",
+      "maps_to": "PRCH-01"
+    },
+    {
+      "question_id": "P-ELEC",
+      "prompt": "Can you access the electrical panel and attic to look for visible wiring issues?",
+      "answer_type": "single_select",
+      "options": ["yes", "no_cannot_access"],
+      "maps_to": "ELEC-01"
+    }
+  ],
+  "_presence_note": "Photos pre-fill presence where visible (a deck photo sets DECK-01 present). Presence questions confirm or fill the rest. Only components marked present get condition questions."
+}
