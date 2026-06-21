@@ -20,8 +20,9 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
-# Project root: two levels up from backend/app/data_loader.py
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# Backend root: one level up from backend/app/data_loader.py
+# reference/ and seed/ live inside backend/, so parent.parent is correct.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REFERENCE_DIR = PROJECT_ROOT / "reference"
 SEED_DIR      = PROJECT_ROOT / "seed"
 # VALIDATION_DIR is intentionally absent. Do not add it.
@@ -200,5 +201,4 @@ class ReferenceData:
         return self._condition_questions
 
     @property
-    def constraints_questions(self) -> List[dict]:
-        return self._constraints_questions
+    def constraints_question
