@@ -13,12 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from .data_loader import ReferenceData
+from .routes import sessions, capture, compute, export
 
 load_dotenv()
 
 app = FastAPI(
     title="Pre-Listing Decision Tool",
-    version="0.1.0",
+    version="0.2.0",
     description="Turns pre-listing dollars into expected net-proceeds changes.",
 )
 
@@ -47,11 +48,9 @@ def health():
 
 
 # ---------------------------------------------------------------------------
-# Routes are registered here as modules are built.
+# Routes
 # ---------------------------------------------------------------------------
-
-# TODO Step 4: from .routes import sessions, capture, compute, export
-# app.include_router(sessions.router, prefix="/session", tags=["session"])
-# app.include_router(capture.router, prefix="/session", tags=["capture"])
-# app.include_router(compute.router, prefix="/session", tags=["compute"])
-# app.include_router(export.router, prefix="/session", tags=["export"])
+app.include_router(sessions.router, prefix="/session",  tags=["session"])
+app.include_router(capture.router,  prefix="/session",  tags=["capture"])
+app.include_router(compute.router,  prefix="/session",  tags=["compute"])
+app.include_router(export.router,   prefix="/session",  tags=["export"])
