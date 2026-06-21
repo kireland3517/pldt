@@ -1,10 +1,9 @@
 """
-Pre-Listing Decision Tool — FastAPI entry point.
+Pre-Listing Decision Tool -- FastAPI entry point.
 
 BLIND RULE: reference data is loaded from reference/ and seed/ only.
 validation/ is never referenced. See data_loader.py.
 """
-
 from __future__ import annotations
 
 import os
@@ -13,13 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from .data_loader import ReferenceData
-from .routes import sessions, capture, compute, export
+from .routes import sessions, capture, compute, export, vision
 
 load_dotenv()
 
 app = FastAPI(
     title="Pre-Listing Decision Tool",
-    version="0.2.0",
+    version="0.3.0",
     description="Turns pre-listing dollars into expected net-proceeds changes.",
 )
 
@@ -31,7 +30,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load reference data once at startup. Never loads validation/.
 ref = ReferenceData()
 
 
@@ -47,10 +45,8 @@ def health():
     }
 
 
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 app.include_router(sessions.router, prefix="/session",  tags=["session"])
 app.include_router(capture.router,  prefix="/session",  tags=["capture"])
 app.include_router(compute.router,  prefix="/session",  tags=["compute"])
 app.include_router(export.router,   prefix="/session",  tags=["export"])
+app.include_router(vision.router,   prefix="/session",  tags=["vision"])
