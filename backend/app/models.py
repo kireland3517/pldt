@@ -1,15 +1,10 @@
 """
 Pydantic schemas for the Pre-Listing Decision Tool.
-These describe what flows through the API — not the reference data files themselves.
 """
 from __future__ import annotations
 from typing import Optional, List, Literal, Dict, Any
 from pydantic import BaseModel, Field
 
-
-# ---------------------------------------------------------------------------
-# Library layer (loaded from reference/components_library.csv at startup)
-# ---------------------------------------------------------------------------
 
 class LibraryComponent(BaseModel):
     component_id: str
@@ -24,17 +19,13 @@ class LibraryComponent(BaseModel):
     repairable: bool
     creditable: bool
     recoup_pct: float
-    recoup_source: str          # "CvV-anchored" or "estimate"
+    recoup_source: str
     safety_eligible: bool
     lender_eligible: bool
     essential_when_needed: bool
-    floor_trigger: str          # "none (discretionary)" or a condition phrase
+    floor_trigger: str
     notes: str
 
-
-# ---------------------------------------------------------------------------
-# Instance layer (per-session, starts BLANK, filled by capture pipeline)
-# ---------------------------------------------------------------------------
 
 class InstanceItem(BaseModel):
     component_id: str
@@ -43,17 +34,12 @@ class InstanceItem(BaseModel):
     severity_detected: Optional[Literal["low", "medium", "high"]] = None
     defect_qualifies_floor: Optional[bool] = None
     chosen_path: Optional[Literal["repair", "replace", "credit", "leave"]] = None
-    source: Optional[Literal["photo", "questionnaire", "inspection"]] = None
+    source: Optional[Literal["photo", "questionnaire", "inspection", "seller_confirmed"]] = None
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
     notes: Optional[str] = None
-    # Shared-structure flag: set when two components share one physical structure
-    # (e.g. DECK-01 and PRCH-01 sharing stairs). floor.py sums cost once.
-    shared_structure: Optional[str] = None  # component_id of the "owner" component
+    shared_structure: Optional[str] = None
+    recent_replacement: Optional[bool] = None
 
-
-# ---------------------------------------------------------------------------
-# Session
-# ---------------------------------------------------------------------------
 
 class SessionCreate(BaseModel):
     address: str
@@ -64,30 +50,43 @@ class SessionStatus(BaseModel):
     property_id: str
 
 
-# ---------------------------------------------------------------------------
-# Capture inputs (what the capture pipeline accepts)
-# ---------------------------------------------------------------------------
-
 class PresenceAnswer(BaseModel):
     question_id: str
     component_id: str | List[str]
-    answer: str                 # "yes"/"no" or option value
+    answer: str
 
 
 class ConditionAnswer(BaseModel):
     question_id: str
     component_id: str
     answer: str
-    maps_to_condition: Optional[str] = None   # normalized condition string
+    maps_to_condition: Optional[str] = None
     maps_to_severity: Optional[Literal["low", "medium", "high"]] = None
 
 
 class PhotoTag(BaseModel):
-    """A single vision-model tag from one uploaded photo."""
     component_id: str
-    tag: str                    # e.g. "deck_present", "open_risers_visible"
+    tag: str
     confidence: float = Field(ge=0.0, le=1.0)
-    source_photo: str           # filename or upload ID
+    source_photo: str
+
+
+class SellerConfirmedTag(BaseModel):
+    """
+    A seller correction to a vision-tagged component.
+
+    Pass 3 in run_capture: overwrites ONLY the fields explicitly set here.
+    None means "seller did not touch this field — leave whatever vision/
+    questionnaire set." An empty SellerConfirmedTag only sets source and
+    confidence; it does not blank out correctly-populated fields.
+
+    Confidence is always set to 1.0 for seller-confirmed fields.
+    """
+    component_id: str
+    present:    Optional[bool] = None   # None = not edited by seller
+    condition:  Optional[str] = None    # None = not edited
+    severity:   Optional[str] = None    # None = not edited
+    seller_note: Optional[str] = None   # appended to notes, never replaces
 
 
 class CaptureSubmission(BaseModel):
@@ -96,16 +95,13 @@ class CaptureSubmission(BaseModel):
     photo_tags: List[PhotoTag] = []
     presence_answers: List[PresenceAnswer] = []
     condition_answers: List[ConditionAnswer] = []
+    seller_confirmed_tags: List[SellerConfirmedTag] = []   # Pass 3 — always wins
 
-
-# ---------------------------------------------------------------------------
-# Compute outputs
-# ---------------------------------------------------------------------------
 
 class FloorItem(BaseModel):
     component_id: str
     display_name: str
-    reason: str                 # plain-language: "safety hazard", "lender required", "essential"
+    reason: str
     chosen_path: Literal["repair", "replace"]
     cost_low: float
     cost_high: float
@@ -130,9 +126,9 @@ class RepairLineItem(BaseModel):
 
 
 class Plan(BaseModel):
-    key: str                    # "recommended", "leaner", "do_everything"
+    key: str
     label: str
-    tradeoff: str               # one-line why
+    tradeoff: str
     floor_spend_low: float
     floor_spend_high: float
     discretionary_spend_low: float
@@ -144,17 +140,17 @@ class Plan(BaseModel):
     net_high: float
     estimated_dom: int
     confidence: float
-    discretionary_items: List[str]  # component_ids included
+    discretionary_items: List[str]
 
 
 class ComputeResponse(BaseModel):
     session_id: str
-    as_is_range: Dict[str, float]       # {"low": ..., "high": ..., "avm_avg": ...}
+    as_is_range: Dict[str, float]
     floor: List[FloorItem]
     repair_table: List[RepairLineItem]
     plans: List[Plan]
     confidence_overall: float
-    open_questions: List[str]           # what would tighten the estimate
+    open_questions: List[str]
 
 
 class ReverseGoalRequest(BaseModel):
@@ -167,13 +163,9 @@ class ReverseGoalResponse(BaseModel):
     target_net: float
     achievable: bool
     plan: Optional[Plan] = None
-    dropped_items: List[str] = []       # component_ids that were excluded
+    dropped_items: List[str] = []
     message: str
 
-
-# ---------------------------------------------------------------------------
-# Editable inputs (seller constraints, live knob)
-# ---------------------------------------------------------------------------
 
 class InputUpsert(BaseModel):
     key: str

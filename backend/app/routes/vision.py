@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import base64
 import json
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 
 from ..data_loader import ReferenceData
 
@@ -28,37 +28,98 @@ def _get_ref() -> ReferenceData:
     return _ref
 
 
-def _build_library_text(library: dict) -> str:
-    lines = ["component_id | display_name | zone | typical_in_home | floor_trigger"]
-    for cid, comp in library.items():
-        lines.append(
-            f"{cid} | {comp['display_name']} | {comp['zone']} | "
-            f"{comp['typical_in_home']} | {comp.get('floor_trigger', '')}"
-        )
-    return "\n".join(lines)
+# Zone -> priority component_ids. Full library is always shown; these get
+# a "focus here first" section. Mislabeled rooms stay safe because vision
+# still sees every component and can tag anything clearly visible.
+ZONE_PRIORITY: dict[str, list[str]] = {
+    "exterior_front": ["SID-01","WIN-01","XDR-01","PRCH-01","DECK-01","LAND-01",
+                       "PWASH-01","GAR-01","ROOF-01","DRV-01","BELL-01","MBOX-01",
+                       "XLT-01","OUT-01","ACCT-01","GUT-01"],
+    "exterior_back":  ["DECK-01","PRCH-01","GUT-01","SID-01","WIN-01","SCR-01",
+                       "LAND-01","OUT-01","XLT-01"],
+    "kitchen":        ["KIT-01","FLR-01","PNT-01","ILT-01","IHW-01","IDR-01",
+                       "PLMB-01","WIN-01","VENT-01"],
+    "primary_bath":   ["BTHP-01","VAN-01","PLMB-01","VENT-01","FLR-01","PNT-01",
+                       "IHW-01","WIN-01"],
+    "secondary_bath": ["BTHS-01","VAN-01","PLMB-01","VENT-01","FLR-01","PNT-01",
+                       "IHW-01"],
+    "living_dining":  ["FLR-01","PNT-01","ILT-01","WIN-01","IDR-01","IHW-01"],
+    "bedroom":        ["FLR-01","PNT-01","ILT-01","WIN-01","IDR-01","IHW-01"],
+    "mechanical":     ["HVAC-01","WH-HTR-01","ELEC-01","PLMB-01","DUCT-01",
+                       "WSHR-01","DET-01","ATTIC-01"],
+    "crawlspace":     ["FND-01"],
+    "garage":         ["GAR-01","ELEC-01","FLR-01","OUT-01","DET-01"],
+    "attic":          ["ATTIC-01","ELEC-01","ROOF-01","DET-01"],
+    "other":          [],
+}
 
+ZONE_LABELS: dict[str, str] = {
+    "exterior_front": "Exterior — Front",
+    "exterior_back":  "Exterior — Back/Side",
+    "kitchen":        "Kitchen",
+    "primary_bath":   "Primary Bathroom",
+    "secondary_bath": "Secondary Bathroom",
+    "living_dining":  "Living / Dining Room",
+    "bedroom":        "Bedroom",
+    "mechanical":     "Mechanical / Utility Room",
+    "crawlspace":     "Crawlspace / Foundation",
+    "garage":         "Garage",
+    "attic":          "Attic",
+    "other":          "General",
+}
 
 SYSTEM_PROMPT = """You are a property inspection photo tagger for a real estate pre-listing tool.
 
-You receive a photo of a residential property and a component library.
-Your task: identify which components from the library are visible or strongly inferable,
-and assess their condition.
+You receive a photo of a residential property, a room label from the seller,
+and a component library with two sections: priority components for this room,
+and the full library.
+
+Your task: tag components visible or strongly inferable in the photo.
 
 RULES:
-1. Use ONLY component_ids from the provided library table. Never invent IDs.
-2. Only include components you can actually see or confidently infer.
-3. If you cannot determine condition, set confidence low (below 0.5) and condition "unknown".
-4. You have no knowledge of this property's history or known condition. Tag only what you see.
-5. condition must be one of: good, fair, poor, failed, unknown
-6. severity must be one of: none, low, medium, high
+1. Use ONLY component_ids from the library. Never invent IDs.
+2. The room label is a focus hint, NOT a constraint. Tag anything you can
+   clearly see regardless of zone — water damage on a bathroom ceiling, exposed
+   wiring in a living room, etc. are always worth flagging.
+3. A mislabeled room is possible. Tag what you actually see.
+4. Your assessment is a draft the seller will review. Be honest about uncertainty.
+5. Confidence below 0.5 means you are guessing — use "unknown" condition.
+6. condition: good | fair | poor | failed | unknown
+7. severity: none | low | medium | high
+8. You have no knowledge of this property's history or known condition.
 
 Output valid JSON only, no prose, no markdown fences:
-{"tags":[{"component_id":"DECK-01","present":true,"condition":"fair","severity":"low","confidence":0.85,"evidence":"Weathered boards visible, railing appears stable"}]}"""
+{"tags":[{"component_id":"VAN-01","present":true,"condition":"fair","severity":"low","confidence":0.70,"evidence":"Dated vanity fixtures visible, appears functional but aged"}]}"""
+
+
+def _build_library_text(library: dict, priority_ids: list[str]) -> str:
+    header = "component_id | display_name | zone | typical_in_home | floor_trigger"
+    priority_set = set(priority_ids)
+
+    priority_rows = [header, "--- PRIORITY FOR THIS ROOM ---"]
+    other_rows    = ["--- FULL LIBRARY (tag if clearly visible) ---"]
+
+    for cid, comp in library.items():
+        row = (f"{cid} | {comp['display_name']} | {comp['zone']} | "
+               f"{comp['typical_in_home']} | {comp.get('floor_trigger','')}")
+        if cid in priority_set:
+            priority_rows.append(row)
+        else:
+            other_rows.append(row)
+
+    return "\n".join(priority_rows + other_rows)
 
 
 @router.post("/{session_id}/photo")
-async def tag_photo(session_id: str, file: UploadFile = File(...)):
-    """Tag one photo. Returns component tags mapped to library IDs. Blind: model sees photo + library only."""
+async def tag_photo(
+    session_id: str,
+    file: UploadFile = File(...),
+    room_zone: str = Form("other"),
+):
+    """
+    Tag one photo. Zone is a strong prior from the seller, not a hard filter.
+    Blind: model sees photo + library only, never property identity or condition.
+    """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured.")
@@ -73,8 +134,15 @@ async def tag_photo(session_id: str, file: UploadFile = File(...)):
     if media_type not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
         media_type = "image/jpeg"
 
-    library_text = _build_library_text(ref.library)
-    user_text = f"Component library:\n{library_text}\n\nTag the components visible in this photo. Output JSON only."
+    priority_ids  = ZONE_PRIORITY.get(room_zone, [])
+    zone_label    = ZONE_LABELS.get(room_zone, "General")
+    library_text  = _build_library_text(ref.library, priority_ids)
+
+    user_text = (
+        f"Room labeled by seller: {zone_label}\n\n"
+        f"Component library:\n{library_text}\n\n"
+        "Tag the components visible in this photo. Output JSON only."
+    )
 
     try:
         import anthropic
@@ -86,7 +154,8 @@ async def tag_photo(session_id: str, file: UploadFile = File(...)):
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}},
+                    {"type": "image", "source": {"type": "base64",
+                     "media_type": media_type, "data": image_b64}},
                     {"type": "text", "text": user_text},
                 ],
             }],
@@ -102,7 +171,8 @@ async def tag_photo(session_id: str, file: UploadFile = File(...)):
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=502, detail=f"Vision response not valid JSON: {raw[:300]} | {e}")
+        raise HTTPException(status_code=502,
+            detail=f"Vision response not valid JSON: {raw[:300]} | {e}")
 
     valid_ids = set(ref.library.keys())
     validated, dropped = [], []
@@ -121,7 +191,12 @@ async def tag_photo(session_id: str, file: UploadFile = File(...)):
             "source_photo": file.filename or "upload",
         })
 
-    return {"filename": file.filename, "tags": validated, "dropped_invalid_ids": dropped}
+    return {
+        "filename": file.filename,
+        "room_zone": room_zone,
+        "tags": validated,
+        "dropped_invalid_ids": dropped,
+    }
 
 
 @router.get("/{session_id}/questions")

@@ -508,7 +508,70 @@ def run_capture(
     # Shared-staircase dedup
     instance = resolve_shared_stairs(instance)
 
-    # Floor qualification
+    # Pass 3: seller-confirmed overwrites (touched fields only, always wins)
+    instance = apply_seller_confirmed(instance, submission.seller_confirmed_tags)
+
+    # Floor qualification (runs after all passes so seller corrections affect floor)
     instance = qualify_floor_members(instance, ref)
+
+    return instance
+
+
+# ---------------------------------------------------------------------------
+# Pass 3: Seller-confirmed overwrite (always highest priority)
+# ---------------------------------------------------------------------------
+
+def apply_seller_confirmed(
+    instance: Dict[str, dict],
+    seller_confirmed_tags: list,
+) -> Dict[str, dict]:
+    """
+    Pass 3: apply seller corrections to the instance.
+
+    OVERWRITE RULE — only fields explicitly set (non-None) are written.
+    This prevents an empty or partial confirmation from blanking out fields
+    that vision and the questionnaire had correctly populated.
+
+    Priority: seller_confirmed > condition_answers > photo_tags (for any
+    field the seller explicitly touched).
+
+    source is set to "seller_confirmed" and confidence to 1.0 whenever
+    any field is written — human confirmation is more reliable than vision.
+    """
+    for tag in seller_confirmed_tags:
+        cid = tag.component_id if hasattr(tag, "component_id") else tag.get("component_id")
+        if not cid or cid not in instance:
+            continue
+
+        item = instance[cid]
+        touched = False
+
+        present  = tag.present   if hasattr(tag, "present")   else tag.get("present")
+        condition= tag.condition if hasattr(tag, "condition")  else tag.get("condition")
+        severity = tag.severity  if hasattr(tag, "severity")   else tag.get("severity")
+        note     = tag.seller_note if hasattr(tag, "seller_note") else tag.get("seller_note")
+
+        if present is not None:
+            item["present"] = present
+            touched = True
+
+        if condition is not None:
+            item["condition_detected"] = condition
+            touched = True
+
+        if severity is not None:
+            item["severity_detected"] = severity
+            touched = True
+
+        if note:
+            existing = item.get("notes") or ""
+            seller_note_text = f"[Seller: {note}]"
+            if seller_note_text not in existing:
+                item["notes"] = (existing + " " + seller_note_text).strip()
+            touched = True
+
+        if touched:
+            item["source"]     = "seller_confirmed"
+            item["confidence"] = 1.0
 
     return instance

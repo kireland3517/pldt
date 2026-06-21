@@ -16,9 +16,10 @@ export async function createSession(address, propertyKey) {
   return json(res)
 }
 
-export async function tagPhoto(sessionId, file) {
+export async function tagPhoto(sessionId, file, room_zone = 'other') {
   const fd = new FormData()
   fd.append('file', file)
+  fd.append('room_zone', room_zone)
   const res = await fetch(`${BASE}/session/${sessionId}/photo`, { method: 'POST', body: fd })
   if (!res.ok) throw new Error((await json(res)).detail || res.statusText)
   return json(res)
@@ -31,10 +32,23 @@ export async function getQuestions(sessionId) {
 }
 
 export async function submitCapture(sessionId, payload) {
+  // payload: { photoTagsForCapture, sellerConfirmedTags, absencePresenceAnswers,
+  //            presence_answers, condition_answers, has_inspection_report }
+  const body = {
+    session_id:           sessionId,
+    has_inspection_report: payload.has_inspection_report || false,
+    photo_tags:           payload.photoTagsForCapture || [],
+    seller_confirmed_tags: payload.sellerConfirmedTags || [],
+    presence_answers:     [
+      ...(payload.absencePresenceAnswers || []),
+      ...(payload.presence_answers || []),
+    ],
+    condition_answers:    payload.condition_answers || [],
+  }
   const res = await fetch(`${BASE}/session/${sessionId}/capture`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, ...payload }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error((await json(res)).detail || res.statusText)
   return json(res)
