@@ -195,6 +195,7 @@ async def tag_photo(
             continue
         validated.append({
             "component_id": cid,
+            "display_name": ref.library[cid].get("display_name", cid),
             "present":      bool(tag.get("present", True)),
             "condition":    tag.get("condition", "unknown"),
             "severity":     tag.get("severity", "none"),

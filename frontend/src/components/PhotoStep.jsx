@@ -195,6 +195,21 @@ export default function PhotoStep({ sessionId, onDone }) {
     })
   }
 
+  function removePhoto(idx) {
+    setPhotos(prev => {
+      URL.revokeObjectURL(prev[idx].url)
+      // Remove from queue if pending
+      queueRef.current = queueRef.current.filter(item => item.idx !== idx)
+      // Re-index remaining items in queue
+      const removed = prev.filter((_, i) => i !== idx)
+      queueRef.current = queueRef.current.map(item => ({
+        ...item,
+        idx: item.idx > idx ? item.idx - 1 : item.idx,
+      }))
+      return removed
+    })
+  }
+
   // ---- table edits ---------------------------------------------------------
   function editTag(photoIdx, tagIdx, field, value) {
     setPhotos(prev => prev.map((p, pi) => {
@@ -278,8 +293,17 @@ export default function PhotoStep({ sessionId, onDone }) {
         <div key={pi} style={cardStyle}>
           <img src={p.url} alt={p.file.name} style={thumbStyle} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6, wordBreak: 'break-all' }}>
-              {p.file.name}
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 500, wordBreak: 'break-all', flex: 1 }}>
+                {p.file.name}
+              </span>
+              <button
+                onClick={() => removePhoto(pi)}
+                disabled={p.status === 'tagging'}
+                title="Remove this photo"
+                style={{ marginLeft: 8, fontSize: 11, color: '#c00', background: 'none', border: 'none', cursor: p.status === 'tagging' ? 'not-allowed' : 'pointer', flexShrink: 0, padding: '0 2px' }}>
+                ✕ Remove
+              </button>
             </div>
 
             <label style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
@@ -338,7 +362,9 @@ export default function PhotoStep({ sessionId, onDone }) {
                       <tbody>
                         {p.editedTags.map((t, ti) => (
                           <tr key={ti} style={{ background: t.seller_confirmed ? '#fffbe6' : 'transparent' }}>
-                            <td style={td}><code style={{ fontSize: 11 }}>{t.component_id}</code></td>
+                            <td style={td} title={t.component_id}>
+                              {t.display_name || t.component_id}
+                            </td>
                             <td style={td}>
                               <select style={cellSelect}
                                 value={t.present ? 'yes' : 'no'}
