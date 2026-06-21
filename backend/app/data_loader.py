@@ -7,7 +7,7 @@ BLIND RULE — enforced here:
   The running tool must be genuinely blind to any specific property's condition.
   Condition enters only through the capture pipeline (photos + questionnaire).
 
-Path layout (relative to project root = PLDT/):
+Path layout (relative to backend/):
   reference/   components_library.csv, instance_schema.csv, *.json
   seed/        property_inputs_*.json
   validation/  QUARANTINED — not referenced here at all
@@ -84,7 +84,7 @@ def blank_instance(library: Dict[str, dict]) -> Dict[str, dict]:
             "confidence": None,
             "notes": None,
             "shared_structure": None,   # set when two components share one structure
-            "recent_replacement": None,   # True if seller confirms replacement within ~5 years
+            "recent_replacement": None, # True if seller confirms replacement within ~5 years
         }
         for cid in library
     }
@@ -201,4 +201,5 @@ class ReferenceData:
         return self._condition_questions
 
     @property
-    def constraints_question
+    def constraints_questions(self) -> List[dict]:
+        return self._constraints_questions
