@@ -6,11 +6,11 @@ async function json(res) {
   catch { throw new Error(`Non-JSON response (${res.status}): ${text.slice(0, 200)}`) }
 }
 
-export async function createSession(address, propertyKey) {
+export async function createSession(address) {
   const res = await fetch(`${BASE}/session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address, property_key: propertyKey }),
+    body: JSON.stringify({ address }),
   })
   if (!res.ok) throw new Error((await json(res)).detail || res.statusText)
   return json(res)

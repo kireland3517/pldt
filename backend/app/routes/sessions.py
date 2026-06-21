@@ -11,15 +11,15 @@ from pydantic import BaseModel
 from typing import Optional
 
 from ..db import get_db, TABLE
-from ..data_loader import load_property_inputs
+from ..data_loader import load_property_inputs, resolve_address_to_key
 
 router = APIRouter()
 
 
 class SessionCreateRequest(BaseModel):
     address: str
-    property_key: str           # seed file key, e.g. "130_kingfisher"
-    listing_month: Optional[int] = None   # 1-12; defaults to current month
+    property_key: Optional[str] = None   # omit to auto-resolve from address
+    listing_month: Optional[int] = None  # 1-12; defaults to current month
     commission_rate: Optional[float] = 0.06
     has_hoa: Optional[bool] = False
     seller_inputs: Optional[dict] = {}
@@ -28,14 +28,17 @@ class SessionCreateRequest(BaseModel):
 @router.post("")
 def create_session(body: SessionCreateRequest):
     """
-    Create a new session. Loads property_json from the seed file so the
-    compute pipeline has what it needs. Returns {session_id, status}.
+    Create a new session. Loads property_json from the seed file.
+    property_key is optional — if omitted, it is resolved from the address
+    by scanning the seed directory for a matching file.
+    Returns {session_id, status}.
     """
     db = get_db()
 
-    # Validate seed exists before creating the session row
+    # Resolve seed key: explicit wins, otherwise derive from address
     try:
-        prop = load_property_inputs(body.property_key)
+        key = body.property_key or resolve_address_to_key(body.address)
+        prop = load_property_inputs(key)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
@@ -46,7 +49,7 @@ def create_session(body: SessionCreateRequest):
 
     row = {
         "address":        body.address,
-        "property_key":   body.property_key,
+        "property_key":   key,
         "status":         "intake",
         "listing_month":  month,
         "property_json":  prop,

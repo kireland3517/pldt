@@ -116,6 +116,58 @@ def load_questionnaire_bank() -> dict:
 # Seed loader (front-door property inputs only)
 # ---------------------------------------------------------------------------
 
+import re as _re
+
+_STREET_TYPES = {
+    'dr','st','ave','blvd','rd','ct','ln','way','pl','cir','ter','trl',
+    'drive','street','avenue','boulevard','road','court','lane','circle',
+    'terrace','trail','place',
+}
+
+def resolve_address_to_key(address: str) -> str:
+    """
+    Normalize a human address to a seed file key by scanning SEED_DIR.
+
+    "130 Kingfisher Dr"  →  "130_kingfisher"
+    "130 Kingfisher Drive" → "130_kingfisher"
+
+    Strategy:
+      1. Fully normalize address (lowercase, collapse non-alnum to underscores).
+      2. Try exact match against available seed keys.
+      3. Progressively drop trailing tokens (street type) until a match is found.
+      4. Raise FileNotFoundError if nothing matches.
+    """
+    available = [
+        p.stem[len("property_inputs_"):]
+        for p in SEED_DIR.glob("property_inputs_*.json")
+    ]
+    if not available:
+        raise FileNotFoundError(f"No seed files found in {SEED_DIR}.")
+
+    normalized = _re.sub(r"[^a-z0-9]+", "_", address.lower().strip()).strip("_")
+
+    # Exact match
+    if normalized in available:
+        return normalized
+
+    # Drop trailing tokens one at a time (handles "dr", "drive", "blvd", etc.)
+    parts = normalized.split("_")
+    for drop in range(1, len(parts)):
+        candidate = "_".join(parts[: len(parts) - drop])
+        if candidate in available:
+            return candidate
+        # Only keep dropping if the removed token looks like a street suffix
+        dropped_token = parts[len(parts) - drop]
+        if dropped_token not in _STREET_TYPES:
+            break
+
+    raise FileNotFoundError(
+        f"No seed file matching address '{address}' "
+        f"(tried '{normalized}' and shorter variants). "
+        f"Available keys: {available}"
+    )
+
+
 def load_property_inputs(address_key: str) -> dict:
     """
     Load front-door inputs for a property: address, public county facts,
