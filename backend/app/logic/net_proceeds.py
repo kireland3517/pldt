@@ -147,6 +147,24 @@ def compute_net_proceeds(
             "Interest + tax + insurance + utilities during DOM",
         )
 
+    # 11. Seller-entered buyer credits / concessions (C-CREDITS)
+    seller_credits = float(seller_inputs.get("seller_credits", 0) or 0)
+    if seller_credits > 0:
+        total_deductions += deduct(
+            "Buyer credits / concessions",
+            seller_credits,
+            "Entered by seller",
+        )
+
+    # 12. Other seller costs (C-OTHER-COSTS): moving, staging, extra attorney, etc.
+    other_seller_costs = float(seller_inputs.get("other_seller_costs", 0) or 0)
+    if other_seller_costs > 0:
+        total_deductions += deduct(
+            "Other seller costs",
+            other_seller_costs,
+            "Moving, staging, extra attorney work, etc.",
+        )
+
     net = gross - total_deductions
 
     return {

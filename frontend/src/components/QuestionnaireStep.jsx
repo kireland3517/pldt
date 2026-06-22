@@ -164,9 +164,11 @@ export default function QuestionnaireStep({ sessionId, photoData, onDone }) {
           sellerInputs.payoff_secondary = secondary
           sellerInputs.payoff_other     = other
         }
-        if (q.question_id === 'C-TIMELINE') sellerInputs.timeline         = val
-        if (q.question_id === 'C-FUND-1')   sellerInputs.can_fund_upfront = val === 'yes'
-        if (q.question_id === 'C-FUND-2')   sellerInputs.can_fund_financed = val === 'yes'
+        if (q.question_id === 'C-TIMELINE')    sellerInputs.timeline           = val
+        if (q.question_id === 'C-FUND-1')      sellerInputs.can_fund_upfront   = val === 'yes'
+        if (q.question_id === 'C-FUND-2')      sellerInputs.can_fund_financed  = val === 'yes'
+        if (q.question_id === 'C-CREDITS')     sellerInputs.seller_credits     = parseFloat(val) || 0
+        if (q.question_id === 'C-OTHER-COSTS') sellerInputs.other_seller_costs = parseFloat(val) || 0
       }
 
       await submitCapture(sessionId, {
