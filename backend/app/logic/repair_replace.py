@@ -62,6 +62,8 @@ def build_repair_rows(condition_list: List[dict]) -> List[dict]:
             "better_value":  call,
             # Floor membership
             "in_floor":      rec["defect_qualifies_floor"],
+            # Positive signals
+            "recent_replacement": rec.get("recent_replacement", False),
             # Confidence / source
             "confidence":    rec["confidence"],
             "source":        rec["source"],

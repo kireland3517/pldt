@@ -2,15 +2,15 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { getCompute, updateInputs } from '../api'
 
 const PLAN_LABELS = {
-  leaner:        'Leaner — floor only',
+  leaner:        'Leaner',
   recommended:   'Recommended',
-  do_everything: 'Do everything',
+  do_everything: 'Do Everything',
 }
 
 const PLAN_DESCRIPTIONS = {
-  leaner:        'Mandatory work only. Smallest upfront cost.',
-  recommended:   'Floor + improvements that pay back ≥ 75% at sale.',
-  do_everything: 'Every actionable item in the repair table.',
+  leaner:        'Required-to-sell items only.',
+  recommended:   'Required + improvements that pay back ≥ 75% at sale.',
+  do_everything: 'Every actionable item.',
 }
 
 const PATH_LABELS = {
@@ -32,29 +32,72 @@ function fmtRange(lo, hi) {
   return `${fmt(lo)} – ${fmt(hi)}`
 }
 
-// ── Repair plan helpers ──────────────────────────────────────────────────────
+function itemCostMid(item) {
+  if (item.better_value === 'replace') return item.cost_mid_replace || 0
+  return item.cost_mid_repair || item.cost_mid_replace || 0
+}
 
-function buildRepairPlan(repairTable, floorResult, plans, level) {
+// ── Skip reason for not-included items ──────────────────────────────────────
+
+function skipReason(item, planLevel) {
+  if (item.better_value === 'leave')     return 'Good condition — no action needed'
+  if (item.recent_replacement)            return 'Recently replaced — no action needed'
+  if (!item.condition_detected)           return 'No defect detected'
+  if (planLevel === 'leaner')             return 'Leaner plan includes required-to-sell items only'
+  if (item.recoup_pct != null && item.recoup_pct < 75)
+    return `Below ROI threshold — ${item.recoup_pct?.toFixed(0)}% of cost returns at sale`
+  return `Below ROI threshold for this plan`
+}
+
+// ── Live net delta computation ───────────────────────────────────────────────
+// Approximation: delta from a base plan when items are added/removed or costs change.
+// Commission impact on sale-price delta is second-order (~5.5% of recoup delta) and
+// intentionally omitted to keep the client-side formula simple. Hit "Apply and
+// recompute" for the exact backend number.
+
+function computeLiveNet(baseNet, repairTable, basePlanIds, effectiveIds, customCosts) {
+  let delta = 0
+  for (const row of repairTable) {
+    if (row.in_floor) continue  // floor always required, never toggled
+    const cid = row.component_id
+    const defaultMid = itemCostMid(row)
+    const usedCost = customCosts[cid] != null ? customCosts[cid] : defaultMid
+    const recoup = (row.recoup_pct || 0) / 100
+
+    const wasIn = basePlanIds.has(cid)
+    const isIn  = effectiveIds.has(cid)
+
+    if (!wasIn && isIn) {
+      delta -= usedCost * (1 - recoup)
+    } else if (wasIn && !isIn) {
+      delta += defaultMid * (1 - recoup)
+    } else if (wasIn && isIn && customCosts[cid] != null) {
+      // same item, cost changed
+      delta += defaultMid * (1 - recoup) - usedCost * (1 - recoup)
+    }
+  }
+  return (baseNet || 0) + delta
+}
+
+// ── Repair plan split ────────────────────────────────────────────────────────
+
+function buildRepairPlan(repairTable, floorResult, effectiveIds) {
   if (!repairTable?.length) return { floorItems: [], discretionary: [], notIncluded: [] }
 
-  const floorIds    = new Set((floorResult?.items || []).map(i => i.component_id))
-  const includedIds = new Set((plans?.[level]?.included_items || []))
-  const floorMeta   = Object.fromEntries((floorResult?.items || []).map(i => [i.component_id, i]))
+  const floorIds  = new Set((floorResult?.items || []).map(i => i.component_id))
+  const floorMeta = Object.fromEntries((floorResult?.items || []).map(i => [i.component_id, i]))
 
-  const floorItems    = []
-  const discretionary = []
-  const notIncluded   = []
+  const floorItems = [], discretionary = [], notIncluded = []
 
   for (const row of repairTable) {
-    const cid      = row.component_id
-    const inFloor  = floorIds.has(cid)
-    const included = includedIds.has(cid)
+    const cid     = row.component_id
+    const inFloor = floorIds.has(cid)
 
     if (inFloor) {
       floorItems.push({ ...row, floor_reason: floorMeta[cid]?.reason || 'required' })
-    } else if (included) {
+    } else if (effectiveIds.has(cid)) {
       discretionary.push(row)
-    } else if (row.better_value !== 'leave' && row.condition_detected) {
+    } else if (row.better_value !== 'leave') {
       notIncluded.push(row)
     }
   }
@@ -62,19 +105,58 @@ function buildRepairPlan(repairTable, floorResult, plans, level) {
   return { floorItems, discretionary, notIncluded }
 }
 
+// ── Inline cost cell ─────────────────────────────────────────────────────────
+
+function CostCell({ item, customCosts, editingCost, setEditingCost, onCostSave }) {
+  const cid      = item.component_id
+  const hasCustom = customCosts[cid] != null
+  const loField  = item.better_value === 'replace' ? item.replace_low  : item.repair_low
+  const hiField  = item.better_value === 'replace' ? item.replace_high : item.repair_high
+
+  if (editingCost === cid) {
+    return (
+      <input
+        type="number"
+        defaultValue={customCosts[cid] || itemCostMid(item) || ''}
+        style={{ width: 90, fontSize: 12, padding: '2px 4px' }}
+        autoFocus
+        onBlur={e => { onCostSave(cid, e.target.value); setEditingCost(null) }}
+        onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+      />
+    )
+  }
+
+  return (
+    <span
+      onClick={() => setEditingCost(cid)}
+      title="Click to enter your own quote"
+      style={{ cursor: 'pointer', textDecorationLine: 'underline', textDecorationStyle: 'dotted', fontSize: 12 }}
+    >
+      {hasCustom
+        ? <><strong>{fmt(customCosts[cid])}</strong><span style={{ color: '#2563eb', fontSize: 11 }}> (your quote)</span></>
+        : fmtRange(loField, hiField)
+      }
+    </span>
+  )
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function ResultsStep({ sessionId }) {
-  const [result,       setResult]       = useState(null)
-  const [loading,      setLoading]      = useState(true)
-  const [error,        setError]        = useState(null)
-  const [commission,   setCommission]   = useState(6)
+  const [result,          setResult]          = useState(null)
+  const [loading,         setLoading]         = useState(true)
+  const [error,           setError]           = useState(null)
+  const [commission,      setCommission]      = useState(6)
   const [payoffPrimary,   setPayoffPrimary]   = useState(0)
   const [payoffSecondary, setPayoffSecondary] = useState(0)
   const [payoffOther,     setPayoffOther]     = useState(0)
-  const [knobDirty,    setKnobDirty]    = useState(false)
-  const [applying,     setApplying]     = useState(false)
-  const [selectedPlan, setSelectedPlan] = useState('recommended')
+  const [knobDirty,       setKnobDirty]       = useState(false)
+  const [applying,        setApplying]        = useState(false)
+  const [selectedPlan,    setSelectedPlan]    = useState('recommended')
+  // Live plan builder state
+  const [customItems,     setCustomItems]     = useState(null)   // null = use plan defaults
+  const [customCosts,     setCustomCosts]     = useState({})     // cid -> number
+  const [editingCost,     setEditingCost]     = useState(null)   // cid | null
 
   const payoffTotal = payoffPrimary + payoffSecondary + payoffOther
 
@@ -87,7 +169,6 @@ export default function ResultsStep({ sessionId }) {
       if (!refresh) {
         if (r.commission_rate) setCommission(Math.round(r.commission_rate * 100 * 10) / 10)
         const si = r.seller_inputs || {}
-        // Restore breakdown if stored; fall back to total in primary
         if (si.payoff_primary != null) {
           setPayoffPrimary(si.payoff_primary)
           setPayoffSecondary(si.payoff_secondary || 0)
@@ -105,6 +186,9 @@ export default function ResultsStep({ sessionId }) {
 
   useEffect(() => { load() }, [load])
 
+  // Reset custom items when plan tab changes
+  useEffect(() => { setCustomItems(null) }, [selectedPlan])
+
   async function applyKnobs() {
     setApplying(true)
     try {
@@ -119,10 +203,32 @@ export default function ResultsStep({ sessionId }) {
       })
       await load(true)
       setKnobDirty(false)
+      setCustomItems(null)
+      setCustomCosts({})
     } catch (err) {
       setError(err.message)
     } finally {
       setApplying(false)
+    }
+  }
+
+  // Toggle item in/out of custom plan
+  function toggleItem(cid) {
+    setCustomItems(prev => {
+      const base = prev ?? new Set(plans[selectedPlan]?.included_items || [])
+      const next = new Set(base)
+      if (next.has(cid)) next.delete(cid); else next.add(cid)
+      return next
+    })
+  }
+
+  // Save a custom cost quote
+  function handleCostSave(cid, rawVal) {
+    const n = parseFloat(rawVal)
+    if (!isNaN(n) && n > 0) {
+      setCustomCosts(prev => ({ ...prev, [cid]: n }))
+    } else if (rawVal === '' || rawVal === '0') {
+      setCustomCosts(prev => { const next = { ...prev }; delete next[cid]; return next })
     }
   }
 
@@ -136,15 +242,30 @@ export default function ResultsStep({ sessionId }) {
   const repair   = result.repair_table || []
   const planKeys = ['leaner', 'recommended', 'do_everything'].filter(k => plans[k])
 
-  // Underwater: every plan nets below zero
   const isUnderwater = planKeys.length > 0 &&
     planKeys.every(k => (plans[k]?.net_proceeds?.net_proceeds ?? 0) < 0)
 
-  const { floorItems, discretionary, notIncluded } =
-    buildRepairPlan(repair, floor, plans, selectedPlan)
+  const selPlan      = plans[selectedPlan] || {}
+  const selNet       = selPlan.net_proceeds || {}
+  const basePlanIds  = new Set(selPlan.included_items || [])
+  const floorIds     = new Set((floor?.items || []).map(i => i.component_id))
 
-  const selPlan = plans[selectedPlan] || {}
-  const selNet  = selPlan.net_proceeds || {}
+  // effectiveIds: floor items always in, then custom or plan defaults for the rest
+  const planNonFloor = new Set([...(selPlan.included_items || [])].filter(id => !floorIds.has(id)))
+  const customNonFloor = customItems  // null or a Set
+  const effectiveNonFloor = customNonFloor ?? planNonFloor
+  const effectiveIds  = new Set([...floorIds, ...effectiveNonFloor])
+  const isCustomized  = customItems !== null &&
+    (customItems.size !== planNonFloor.size ||
+     [...customItems].some(id => !planNonFloor.has(id)))
+
+  const baseNet  = selNet.net_proceeds ?? 0
+  const liveNet  = computeLiveNet(baseNet, repair, basePlanIds, effectiveIds, customCosts)
+  const netDelta = liveNet - baseNet
+  const hasCustomCosts = Object.keys(customCosts).length > 0
+
+  const { floorItems, discretionary, notIncluded } =
+    buildRepairPlan(repair, floor, effectiveIds)
 
   return (
     <div>
@@ -154,14 +275,13 @@ export default function ResultsStep({ sessionId }) {
       <section style={sectionStyle}>
         <h3 style={h3}>As-is value estimate</h3>
         <div style={gridStyle}>
-          <Stat label="Low"        value={fmt(val.low)} />
-          <Stat label="Mid"        value={fmt(val.mid)} highlight />
-          <Stat label="High"       value={fmt(val.high)} />
-          {val.avm_avg  && <Stat label="AVM avg"    value={fmt(val.avm_avg)} />}
+          <Stat label="Low"  value={fmt(val.low)} />
+          <Stat label="Mid"  value={fmt(val.mid)} highlight />
+          <Stat label="High" value={fmt(val.high)} />
+          {val.avm_avg   && <Stat label="AVM avg"    value={fmt(val.avm_avg)} />}
           {val.confidence && <Stat label="Confidence" value={`${(val.confidence * 100).toFixed(0)}%`} />}
         </div>
         {val.note && <p style={noteStyle}>{val.note}</p>}
-
         {val.comp_detail?.length > 0 && (
           <details style={{ marginTop: 12 }}>
             <summary style={detailsLink}>Comparable sales detail</summary>
@@ -186,7 +306,7 @@ export default function ResultsStep({ sessionId }) {
         )}
       </section>
 
-      {/* ── Underwater state ── */}
+      {/* ── Underwater ── */}
       {isUnderwater && (
         <section style={{ ...sectionStyle, borderColor: '#f0c040', background: '#fffbe6' }}>
           <h3 style={{ ...h3, color: '#7a5c00' }}>Your current numbers show a shortfall</h3>
@@ -201,8 +321,7 @@ export default function ResultsStep({ sessionId }) {
           <p style={{ fontSize: 13, lineHeight: 1.6 }}>
             This doesn't mean you can't sell — it means the numbers as entered don't leave a
             profit margin. Before deciding anything, confirm your exact payoff with your lender
-            and review the required work list below to check whether any items were flagged
-            in error.
+            and review the required items below to check whether any were flagged in error.
           </p>
           <p style={{ fontSize: 12, color: '#888' }}>
             Adjust the payoff amount in the "Adjust" section below if the figure isn't accurate.
@@ -210,7 +329,7 @@ export default function ResultsStep({ sessionId }) {
         </section>
       )}
 
-      {/* ── Plan comparison cards ── */}
+      {/* ── Plan cards ── */}
       <section style={sectionStyle}>
         <h3 style={h3}>Plans — estimated net proceeds</h3>
         <p style={noteStyle}>
@@ -223,7 +342,7 @@ export default function ResultsStep({ sessionId }) {
             const isNeg = (net.net_proceeds ?? 0) < 0
             return (
               <div key={key}
-                style={planCardStyle(key, selectedPlan === key)}
+                style={planCardStyle(selectedPlan === key)}
                 onClick={() => setSelectedPlan(key)}
               >
                 <div style={{ fontWeight: 700, marginBottom: 4, fontSize: 13 }}>
@@ -252,137 +371,209 @@ export default function ResultsStep({ sessionId }) {
             )
           })}
         </div>
-        <p style={{ fontSize: 11, color: '#999', marginTop: 8 }}>
-          Estimated days-on-market is based on historical averages and seasonality.
-          A competitive seller's market or slow buyer's market will shift this timeline.
+        <p style={caveatNote}>
+          Days-on-market is based on historical averages and seasonality.
+          A hot or slow market will shift this significantly.
         </p>
-        <p style={{ fontSize: 11, color: '#999' }}>
-          Time-to-sell covers listing to closing only. It does not include time to complete
+        <p style={caveatNote}>
+          Time-to-sell is listing to closing only. It does not include time to complete
           major construction — your actual carrying costs will be higher while work is underway.
         </p>
       </section>
 
-      {/* ── Repair plan detail (for selected plan) ── */}
+      {/* ── Repair plan ── */}
       <section style={sectionStyle}>
-        <h3 style={h3}>Repair plan — {PLAN_LABELS[selectedPlan]}</h3>
-        <div style={{ marginBottom: 12 }}>
-          {planKeys.map(key => (
-            <button key={key}
-              style={tabStyle(key === selectedPlan)}
-              onClick={() => setSelectedPlan(key)}>
-              {PLAN_LABELS[key]}
-            </button>
-          ))}
+        {/* Plan tabs + live net bar */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+          <div>
+            {planKeys.map(key => (
+              <button key={key}
+                style={tabStyle(key === selectedPlan)}
+                onClick={() => setSelectedPlan(key)}>
+                {PLAN_LABELS[key]}
+              </button>
+            ))}
+          </div>
+
+          {/* Live net proceeds readout */}
+          <div style={liveNetBand(netDelta, isCustomized || hasCustomCosts)}>
+            <span style={{ fontSize: 11, color: '#555', marginRight: 8 }}>
+              {isCustomized || hasCustomCosts ? 'Custom plan — est. net:' : `${PLAN_LABELS[selectedPlan]} est. net:`}
+            </span>
+            <span style={{ fontSize: 15, fontWeight: 700, color: liveNet < 0 ? '#c00' : '#1a7f37' }}>
+              {fmt(liveNet)}
+            </span>
+            {(isCustomized || hasCustomCosts) && netDelta !== 0 && (
+              <span style={{ fontSize: 11, color: netDelta > 0 ? '#1a7f37' : '#c00', marginLeft: 8 }}>
+                ({netDelta > 0 ? '+' : ''}{fmt(netDelta)} vs plan)
+              </span>
+            )}
+            {(isCustomized || hasCustomCosts) && (
+              <button
+                style={{ marginLeft: 12, fontSize: 11, background: 'none', border: '1px solid #ccc', borderRadius: 3, padding: '2px 8px', cursor: 'pointer' }}
+                onClick={() => { setCustomItems(null); setCustomCosts({}) }}
+              >
+                Reset to plan
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Floor items */}
+        <p style={{ fontSize: 11, color: '#888', marginTop: -8, marginBottom: 14 }}>
+          Check or uncheck items to build your own plan. Click any cost to enter a real quote.
+          {(isCustomized || hasCustomCosts) && ' Live estimate is approximate — use "Apply and recompute" below for the exact number.'}
+        </p>
+
+        {/* ── Section 1: Required to sell ── */}
         {floorItems.length > 0 && (
-          <div style={{ marginBottom: 20 }}>
-            <div style={subheadStyle}>
-              Required work — {floorItems.length} item{floorItems.length !== 1 ? 's' : ''}
+          <div style={{ marginBottom: 24 }}>
+            <div style={sectionHeadStyle('#7c2d12', '#fef3c7', '⚠')}>
+              Required to sell — {floorItems.length} item{floorItems.length !== 1 ? 's' : ''}
             </div>
-            <p style={{ ...noteStyle, marginBottom: 8 }}>
-              These must be addressed before listing. Lenders flag them, or they are
-              safety issues buyers' agents will call out.
+            <p style={{ fontSize: 12, color: '#78350f', margin: '6px 0 10px' }}>
+              These must be addressed before listing. Lenders require them fixed before approving a buyer's loan,
+              or they are safety issues that will be called out in the buyer's inspection.
+              They are included in every plan.
             </p>
             <table style={tableStyle}>
               <thead>
                 <tr>
                   <th style={th}>Component</th>
-                  <th style={th}>Why required</th>
-                  <th style={th}>Action</th>
-                  <th style={th}>Repair range</th>
-                  <th style={th}>Replace range</th>
-                  <th style={th}>Rec. path</th>
+                  <th style={th}>Reason required</th>
+                  <th style={th}>Rec. action</th>
+                  <th style={th} title="Click any cost to enter your real quote">Cost estimate ✎</th>
+                  <th style={th}>Condition</th>
                   <th style={th}>Note</th>
                 </tr>
               </thead>
               <tbody>
                 {floorItems.map((item, i) => (
-                  <tr key={i} style={{ background: i % 2 === 0 ? '#fff8f0' : '#fff' }}>
-                    <td style={{ ...td, fontWeight: 500 }}>{item.display_name}</td>
-                    <td style={{ ...td, color: '#b45309', fontSize: 11 }}>{item.floor_reason}</td>
-                    <td style={td}>{PATH_LABELS[item.better_value] || item.better_value}</td>
-                    <td style={td}>{fmtRange(item.repair_low, item.repair_high)}</td>
-                    <td style={td}>{fmtRange(item.replace_low, item.replace_high)}</td>
-                    <td style={{ ...td, fontWeight: 600 }}>{PATH_LABELS[item.better_value] || '—'}</td>
+                  <tr key={i} style={{ background: i % 2 === 0 ? '#fffbeb' : '#fff' }}>
+                    <td style={{ ...td, fontWeight: 600 }}>{item.display_name}</td>
+                    <td style={{ ...td, fontSize: 11, color: '#92400e' }}>{item.floor_reason}</td>
+                    <td style={{ ...td, fontWeight: 500 }}>{PATH_LABELS[item.better_value] || item.better_value}</td>
+                    <td style={td}>
+                      <CostCell
+                        item={item}
+                        customCosts={customCosts}
+                        editingCost={editingCost}
+                        setEditingCost={setEditingCost}
+                        onCostSave={handleCostSave}
+                      />
+                    </td>
+                    <td style={{ ...td, fontSize: 11, color: '#555' }}>{item.condition_detected || '—'}</td>
                     <td style={{ ...td, fontSize: 11, color: '#777' }}>{item.notes || '—'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             <div style={{ fontSize: 12, color: '#555', marginTop: 6 }}>
-              Required work total: <strong>{fmtRange(floor.cost_low, floor.cost_high)}</strong>
+              Required-to-sell total: <strong>{fmtRange(floor.cost_low, floor.cost_high)}</strong>
               {floor.cost_mid ? ` (mid ${fmt(floor.cost_mid)})` : ''}
             </div>
           </div>
         )}
 
-        {/* Discretionary items */}
-        {discretionary.length > 0 && (
-          <div style={{ marginBottom: 20 }}>
-            <div style={subheadStyle}>
-              Additional work in this plan — {discretionary.length} item{discretionary.length !== 1 ? 's' : ''}
-            </div>
-            <p style={{ ...noteStyle, marginBottom: 8 }}>
-              Not required, but included because the value return justifies the spend.
-            </p>
+        {/* ── Section 2: Optional — increases value ── */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={sectionHeadStyle('#14532d', '#f0fdf4', '↑')}>
+            Optional — increases value
+            {discretionary.length > 0
+              ? ` — ${discretionary.length} item${discretionary.length !== 1 ? 's' : ''} selected`
+              : ' — none selected'}
+          </div>
+          <p style={{ fontSize: 12, color: '#166534', margin: '6px 0 10px' }}>
+            Not required to sell. Included because the value return justifies the spend.
+            Uncheck any item to remove it from your plan and see the live net adjust.
+          </p>
+
+          {discretionary.length > 0 ? (
             <table style={tableStyle}>
               <thead>
                 <tr>
+                  <th style={{ ...th, width: 28 }}></th>
                   <th style={th}>Component</th>
                   <th style={th}>Condition</th>
-                  <th style={th}>Action</th>
-                  <th style={th}>Repair range</th>
-                  <th style={th}>Replace range</th>
+                  <th style={th}>Rec. action</th>
+                  <th style={th} title="Click any cost to enter your real quote">Cost estimate ✎</th>
                   <th style={th}>Value return</th>
                   <th style={th}>Note</th>
                 </tr>
               </thead>
               <tbody>
                 {discretionary.map((item, i) => (
-                  <tr key={i} style={{ background: i % 2 === 0 ? '#f0f9f0' : '#fff' }}>
+                  <tr key={i} style={{ background: i % 2 === 0 ? '#f0fdf4' : '#fff' }}>
+                    <td style={{ ...td, textAlign: 'center' }}>
+                      <input type="checkbox" checked
+                        onChange={() => toggleItem(item.component_id)}
+                        style={{ cursor: 'pointer' }} />
+                    </td>
                     <td style={{ ...td, fontWeight: 500 }}>{item.display_name}</td>
                     <td style={{ ...td, fontSize: 11, color: '#555' }}>{item.condition_detected || '—'}</td>
                     <td style={td}>{PATH_LABELS[item.better_value] || item.better_value}</td>
-                    <td style={td}>{fmtRange(item.repair_low, item.repair_high)}</td>
-                    <td style={td}>{fmtRange(item.replace_low, item.replace_high)}</td>
+                    <td style={td}>
+                      <CostCell
+                        item={item}
+                        customCosts={customCosts}
+                        editingCost={editingCost}
+                        setEditingCost={setEditingCost}
+                        onCostSave={handleCostSave}
+                      />
+                    </td>
                     <td style={{ ...td, fontSize: 11 }}>{item.effective_recoup_label || `${item.recoup_pct?.toFixed(0)}%`}</td>
                     <td style={{ ...td, fontSize: 11, color: '#777' }}>{item.notes || '—'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-        )}
+          ) : (
+            <p style={{ fontSize: 12, color: '#888', fontStyle: 'italic' }}>
+              No optional items selected. Check items below to add them.
+            </p>
+          )}
+        </div>
 
-        {/* Not included */}
+        {/* ── Section 3: Not included ── */}
         {notIncluded.length > 0 && (
           <details>
             <summary style={detailsLink}>
-              {notIncluded.length} item{notIncluded.length !== 1 ? 's' : ''} not included in this plan
+              {notIncluded.length} item{notIncluded.length !== 1 ? 's' : ''} not in this plan — check to add
             </summary>
             <table style={{ ...tableStyle, marginTop: 8 }}>
               <thead>
                 <tr>
+                  <th style={{ ...th, width: 28 }}></th>
                   <th style={th}>Component</th>
                   <th style={th}>Condition</th>
-                  <th style={th}>Why skipped</th>
+                  <th style={th}>Why not included</th>
+                  <th style={th} title="Click any cost to enter your real quote">Cost estimate ✎</th>
                   <th style={th}>Value return</th>
                 </tr>
               </thead>
               <tbody>
                 {notIncluded.map((item, i) => (
                   <tr key={i}>
+                    <td style={{ ...td, textAlign: 'center' }}>
+                      <input type="checkbox" checked={false}
+                        onChange={() => toggleItem(item.component_id)}
+                        style={{ cursor: 'pointer' }} />
+                    </td>
                     <td style={td}>{item.display_name}</td>
                     <td style={{ ...td, fontSize: 11 }}>{item.condition_detected || '—'}</td>
                     <td style={{ ...td, fontSize: 11, color: '#888' }}>
-                      {item.better_value === 'leave'
-                        ? 'Leave as-is recommended'
-                        : `Not in ${PLAN_LABELS[selectedPlan].toLowerCase()} scope`}
+                      {skipReason(item, selectedPlan)}
+                    </td>
+                    <td style={td}>
+                      <CostCell
+                        item={item}
+                        customCosts={customCosts}
+                        editingCost={editingCost}
+                        setEditingCost={setEditingCost}
+                        onCostSave={handleCostSave}
+                      />
                     </td>
                     <td style={{ ...td, fontSize: 11 }}>
-                      {item.effective_recoup_label || `${item.recoup_pct?.toFixed(0)}%`}
+                      {item.effective_recoup_label || (item.recoup_pct != null ? `${item.recoup_pct?.toFixed(0)}%` : '—')}
                     </td>
                   </tr>
                 ))}
@@ -391,16 +582,20 @@ export default function ResultsStep({ sessionId }) {
           </details>
         )}
 
-        {floorItems.length === 0 && discretionary.length === 0 && (
+        {floorItems.length === 0 && discretionary.length === 0 && notIncluded.length === 0 && (
           <p style={{ fontSize: 13, color: '#888' }}>
             No repair items found. Make sure photos have been tagged and the questionnaire submitted.
           </p>
         )}
       </section>
 
-      {/* ── Adjust knobs ── */}
+      {/* ── Adjust inputs ── */}
       <section style={sectionStyle}>
         <h3 style={h3}>Adjust inputs</h3>
+        <p style={noteStyle}>
+          Changing these recalculates the exact net proceeds from the backend.
+          The live estimate above is an approximation — use this for the precise number.
+        </p>
 
         <label style={labelStyle}>
           Commission rate: <strong>{commission}%</strong>
@@ -416,13 +611,12 @@ export default function ResultsStep({ sessionId }) {
             Mortgage payoff — total: <strong>{fmt(payoffTotal)}</strong>
           </div>
           <p style={{ fontSize: 12, color: '#666', margin: '0 0 8px' }}>
-            Include all balances so the net estimate is accurate.
-            Forgetting a HELOC or lien is the most common source of a wrong net number.
+            Include all balances. Forgetting a HELOC or lien is the most common source of a wrong net number.
           </p>
           {[
-            { label: 'Primary mortgage',            val: payoffPrimary,   set: setPayoffPrimary },
-            { label: 'Second mortgage / HELOC',     val: payoffSecondary, set: setPayoffSecondary },
-            { label: 'Liens, unpaid taxes, or other', val: payoffOther,   set: setPayoffOther },
+            { label: 'Primary mortgage',              val: payoffPrimary,   set: setPayoffPrimary },
+            { label: 'Second mortgage / HELOC',       val: payoffSecondary, set: setPayoffSecondary },
+            { label: 'Liens, unpaid taxes, or other', val: payoffOther,     set: setPayoffOther },
           ].map(({ label, val: v, set }) => (
             <label key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13 }}>
               <span style={{ width: 220 }}>{label}</span>
@@ -444,6 +638,8 @@ export default function ResultsStep({ sessionId }) {
   )
 }
 
+// ── Sub-components ───────────────────────────────────────────────────────────
+
 function Stat({ label, value, highlight }) {
   return (
     <div style={{ textAlign: 'center' }}>
@@ -453,9 +649,23 @@ function Stat({ label, value, highlight }) {
   )
 }
 
+function sectionHeadStyle(color, bg, icon) {
+  return {
+    fontSize: 13,
+    fontWeight: 700,
+    color,
+    background: bg,
+    borderRadius: 3,
+    padding: '5px 10px',
+    marginBottom: 0,
+    display: 'inline-block',
+  }
+}
+
+// ── Styles ───────────────────────────────────────────────────────────────────
+
 const sectionStyle  = { marginBottom: 24, padding: 16, border: '1px solid #ddd', borderRadius: 4 }
 const h3            = { fontSize: 14, marginTop: 0, marginBottom: 10 }
-const subheadStyle  = { fontSize: 13, fontWeight: 600, marginBottom: 4 }
 const gridStyle     = { display: 'flex', gap: 24, flexWrap: 'wrap', justifyContent: 'flex-start', marginBottom: 8 }
 const tableStyle    = { borderCollapse: 'collapse', width: '100%', fontSize: 12, marginTop: 4 }
 const th            = { textAlign: 'left', padding: '4px 8px', borderBottom: '1px solid #ccc', fontWeight: 600, background: '#f9f9f9', whiteSpace: 'nowrap' }
@@ -463,7 +673,9 @@ const td            = { padding: '4px 8px', borderBottom: '1px solid #eee', vert
 const labelStyle    = { display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 4 }
 const btnStyle      = { padding: '6px 18px', fontSize: 13, cursor: 'pointer' }
 const noteStyle     = { fontSize: 12, color: '#666', margin: '4px 0' }
+const caveatNote    = { fontSize: 11, color: '#999', margin: '4px 0' }
 const detailsLink   = { fontSize: 12, color: '#0066cc', cursor: 'pointer' }
+
 const tabStyle = (active) => ({
   marginRight: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer',
   border: active ? '1px solid #333' : '1px solid #ccc',
@@ -471,11 +683,22 @@ const tabStyle = (active) => ({
   background: active ? '#333' : '#fff',
   color: active ? '#fff' : '#333',
 })
-const planCardStyle = (key, selected) => ({
+
+const planCardStyle = (selected) => ({
   flex: '1 1 180px',
   border: selected ? '2px solid #333' : '1px solid #ddd',
   borderRadius: 4,
   padding: 12,
   background: selected ? '#fafafa' : '#fff',
   cursor: 'pointer',
+})
+
+const liveNetBand = (delta, isCustomized) => ({
+  display: 'flex',
+  alignItems: 'center',
+  background: isCustomized ? '#eff6ff' : '#f9f9f9',
+  border: isCustomized ? '1px solid #bfdbfe' : '1px solid #e5e7eb',
+  borderRadius: 4,
+  padding: '5px 12px',
+  gap: 4,
 })

@@ -68,9 +68,10 @@ def _refined_call(row: dict, recoup_pct: float, source: str, is_defect: bool) ->
     ROI-aware better_value recommendation.
 
     Rules:
-    1. Floor items (defect, in_floor=True): use repair unless repair is not
-       possible, then replace. Credit is not viable for lender/safety items
-       (loan can't close until fixed).
+    0. Terminal failure signals → replace always (repair is not viable when
+       the component has failed, is non-functional, or has structural failure).
+    1. Floor items (defect, in_floor=True): replace if failed/non-functional,
+       otherwise repair unless not repairable. Credit not viable (loan blocks).
     2. Non-floor defects: repair if cheaper and recoup is acceptable.
     3. Upgrades with CvV-anchored high recoup (>=100%): prefer repair or the
        cheaper option; these are the high-ROI moves.
@@ -81,6 +82,23 @@ def _refined_call(row: dict, recoup_pct: float, source: str, is_defect: bool) ->
     creditable = row.get("creditable", False)
     repair_mid  = row.get("cost_mid_repair")
     replace_mid = row.get("cost_mid_replace")
+
+    # Rule 0: terminal failure → replace is the only defensible action.
+    # "Failed" means the component is beyond repair; repair estimates do not apply.
+    _TERMINAL_SIGNALS = (
+        "failed",
+        "non-functional",
+        "structural failure",
+        "structural hazard",
+        "end-of-life",
+        "eol",
+        "does not work",
+        "beyond service life",
+        "beyond typical service life",
+    )
+    cond_lower = (row.get("condition_detected") or "").lower()
+    if any(sig in cond_lower for sig in _TERMINAL_SIGNALS):
+        return "replace"
 
     # Floor items must be fixed; credit is not acceptable
     if in_floor:

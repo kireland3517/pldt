@@ -153,6 +153,18 @@ _VISION_CONDITION_TAGS: Dict[str, Tuple[str, str]] = {
     "aged":                   ("aged",                          "low"),
 }
 
+# Map bare condition enum values (from vision endpoint) to descriptive text + severity.
+# The vision API returns condition as 'good'|'fair'|'poor'|'failed'|'unknown'.
+# The frontend passes these as the tag field in photo_tags for capture.
+# These don't match _VISION_CONDITION_TAGS keys, so we handle them here.
+_CONDITION_ENUM_MAP: Dict[str, tuple] = {
+    "good":   ("good condition",          "none"),
+    "fair":   ("fair condition",          "low"),
+    "poor":   ("poor condition",          "medium"),
+    "failed": ("failed / non-functional", "high"),
+}
+
+
 def apply_photo_tags(
     instance: Dict[str, dict],
     photo_tags: List[PhotoTag],
@@ -175,6 +187,23 @@ def apply_photo_tags(
                 item["present"] = True
                 item["source"] = "photo"
                 item["confidence"] = max(item["confidence"] or 0, tag.confidence)
+            continue
+
+        # Bare condition enum values (e.g. 'poor', 'failed') sent by the frontend
+        # after the seller reviews the vision draft. Map to descriptive condition text.
+        if tag.tag in _CONDITION_ENUM_MAP:
+            cond_text, severity = _CONDITION_ENUM_MAP[tag.tag]
+            item["present"] = True
+            if item["condition_detected"] is None:
+                item["condition_detected"] = cond_text
+                item["severity_detected"]  = severity
+            else:
+                existing_sev = item["severity_detected"] or "none"
+                if _sev_rank(severity) > _sev_rank(existing_sev):
+                    item["condition_detected"] = cond_text
+                    item["severity_detected"]  = severity
+            item["source"]     = "photo"
+            item["confidence"] = max(item["confidence"] or 0, tag.confidence)
             continue
 
         # Condition tags
