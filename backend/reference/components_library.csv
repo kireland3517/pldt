@@ -17,6 +17,7 @@ MBOX-01,Mailbox,Exterior,common,minor,80,150,80,150,False,True,60,estimate,False
 BELL-01,Doorbell,Exterior,common,minor,80,125,100,125,True,True,50,estimate,False,False,False,none (discretionary),Cheap either way.
 OUT-01,Exterior outlets / GFCI,Exterior,common,minor,100,300,200,500,False,False,60,estimate,True,False,False,"missing covers, shock hazard",GFCI/cover plates are safety items. Replace when missing or exposed.
 GAR-01,Garage door / opener,Exterior,common,minor,150,400,800,1500,True,True,97.8,CvV-2024-SA,False,True,False,"non-functional, damaged door",CvV garage door replacement 94%. Lender-eligible if non-functional (FHA/VA).
+FIRE-01,Fireplace / chimney / flue,Interior,sometimes,major,200,800,2000,8000,True,True,70,estimate,False,False,False,none,Inspect-first item. Scope unclear without chimney sweep. Non-functional → inspect action.
 HVAC-01,HVAC system (furnace + AC),Systems,always,major,200,1500,6000,12000,True,True,50,estimate,False,True,False,non-functional,Lender-eligible if not operating. Age noted via questionnaire.
 WH-HTR-01,Water heater,Systems,always,minor,150,500,1200,2500,True,True,55,estimate,False,True,False,"non-functional, leaking, or beyond typical service life (12+ years)","Lender-eligible if failed, leaking, or beyond typical 12-yr service life (FHA/VA)."
 ELEC-01,Electrical panel / wiring,Systems,always,major,500,2000,3000,8000,True,True,55,estimate,True,True,False,"open junction boxes, exposed wiring, missing covers, unsafe panel",Partial detection only without inspection. Confidence capped at 0.60 blind.
