@@ -106,7 +106,13 @@ def compute(session_id: str, refresh: bool = False):
 
     # Return cached result unless refresh requested or cache is empty
     if session.get("compute_result") and not refresh:
-        return {"session_id": session_id, "cached": True, **session["compute_result"]}
+        return {
+            "session_id":      session_id,
+            "cached":          True,
+            "commission_rate": session.get("commission_rate", 0.06),
+            "seller_inputs":   session.get("seller_inputs") or {},
+            **session["compute_result"],
+        }
 
     result = _run_chain(session, ref)
 
@@ -116,7 +122,13 @@ def compute(session_id: str, refresh: bool = False):
         "status": "compute",
     }).eq("id", session_id).execute()
 
-    return {"session_id": session_id, "cached": False, **result}
+    return {
+        "session_id":      session_id,
+        "cached":          False,
+        "commission_rate": session.get("commission_rate", 0.06),
+        "seller_inputs":   session.get("seller_inputs") or {},
+        **result,
+    }
 
 
 class InputsUpdate(BaseModel):

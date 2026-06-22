@@ -153,7 +153,7 @@ export default function QuestionnaireStep({ sessionId, photoData, onDone }) {
       for (const q of visibleConstraints) {
         const val = answers[`CI_${q.question_id}`]
         if (!val) continue
-        if (q.question_id === 'C-PAYOFF')   sellerInputs.mortgage_balance = parseFloat(val) || 0
+        if (q.question_id === 'C-PAYOFF')   sellerInputs.mortgage_payoff  = parseFloat(val) || 0
         if (q.question_id === 'C-TIMELINE') sellerInputs.timeline         = val
         if (q.question_id === 'C-FUND-1')   sellerInputs.can_fund_upfront = val === 'yes'
         if (q.question_id === 'C-FUND-2')   sellerInputs.can_fund_financed = val === 'yes'

@@ -28,6 +28,12 @@ export default function ResultsStep({ sessionId }) {
     try {
       const r = await getCompute(sessionId, refresh)
       setResult(r)
+      // Pre-populate knobs from stored session values on first load
+      if (!refresh) {
+        if (r.commission_rate) setCommission(Math.round(r.commission_rate * 100 * 10) / 10)
+        const bal = r.seller_inputs?.mortgage_payoff
+        if (bal != null && bal > 0) setPayoff(bal)
+      }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -42,7 +48,7 @@ export default function ResultsStep({ sessionId }) {
     try {
       await updateInputs(sessionId, {
         commission_rate: commission / 100,
-        seller_inputs: { mortgage_balance: payoff },
+        seller_inputs: { mortgage_payoff: payoff },
       })
       await load(true)
       setKnobDirty(false)
