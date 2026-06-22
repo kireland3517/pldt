@@ -1,8 +1,7 @@
-import React, { useState, useRef, useCallback } from 'react'
-import { tagPhoto } from '../api'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
+import { tagPhoto, getSession } from '../api'
 
 const ROOM_ZONES = [
-  // ---- exterior living spaces ----
   { value: 'exterior_front',   label: 'Exterior — Front',
     priority: ['SID-01','WIN-01','XDR-01','LAND-01','PWASH-01','GAR-01','ROOF-01','DRV-01','ACCT-01','BELL-01','MBOX-01','XLT-01'] },
   { value: 'exterior_back',    label: 'Exterior — Back/Side',
@@ -13,7 +12,6 @@ const ROOM_ZONES = [
     priority: ['ROOF-01','GUT-01','ATTIC-01'] },
   { value: 'yard_lot',         label: 'Yard / Lot / Driveway',
     priority: ['LAND-01','DRV-01','GUT-01','MBOX-01','BELL-01'] },
-  // ---- interior rooms ----
   { value: 'kitchen',          label: 'Kitchen',
     priority: ['KIT-01','FLR-01','PNT-01','ILT-01','PLMB-01','IHW-01'] },
   { value: 'primary_bath',     label: 'Primary Bathroom',
@@ -25,14 +23,12 @@ const ROOM_ZONES = [
   { value: 'dining_room',      label: 'Dining Room',
     priority: ['FLR-01','PNT-01','ILT-01','WIN-01','IHW-01'] },
   { value: 'primary_bedroom',  label: 'Primary Bedroom',
-    priority: ['FLR-01','PNT-01','ILT-01','WIN-01','IHW-01','IDR-01'] },
+    priority: ['FLR-01','PNT-01','ILT-01','WIN-01','IDR-01','IHW-01'] },
   { value: 'bedroom',          label: 'Bedroom (other)',
     priority: ['FLR-01','PNT-01','ILT-01','WIN-01'] },
-  // ---- systems / structure ----
   { value: 'mechanical',       label: 'Mechanical / Utility',
     priority: ['HVAC-01','WH-HTR-01','ELEC-01','PLMB-01','DUCT-01','WSHR-01','DET-01'] },
-  { value: 'crawlspace',       label: 'Crawlspace / Foundation',
-    priority: ['FND-01'] },
+  { value: 'crawlspace',       label: 'Crawlspace / Foundation', priority: ['FND-01'] },
   { value: 'garage',           label: 'Garage',
     priority: ['GAR-01','ELEC-01','OUT-01','DET-01'] },
   { value: 'attic',            label: 'Attic',
@@ -41,7 +37,7 @@ const ROOM_ZONES = [
 ]
 
 const CONDITIONS = ['good', 'fair', 'poor', 'failed', 'unknown']
-const SEVERITIES = ['none', 'low', 'medium', 'high']
+const SEVERITIES  = ['none', 'low', 'medium', 'high']
 
 const ALWAYS_COMMON = new Set([
   'ROOF-01','FND-01','WIN-01','XDR-01','LAND-01','HVAC-01','WH-HTR-01',
@@ -49,39 +45,79 @@ const ALWAYS_COMMON = new Set([
   'DECK-01','PRCH-01','GAR-01','GUT-01','VENT-01',
 ])
 
-// ---- helpers ----------------------------------------------------------------
+// ── merge helpers ────────────────────────────────────────────────────────────
 
-function initEditedTag(raw) {
-  return {
-    ...raw,
-    orig_present:   raw.present,
-    orig_condition: raw.condition,
-    orig_severity:  raw.severity,
-    seller_note:    '',
-    seller_confirmed: false,
+// Merge one tag into the running component map.
+// Higher-confidence reading wins for condition/severity/evidence.
+// Seller edits (seller_note) are preserved across merges.
+function mergeSingleTag(map, tag) {
+  const cid = tag.component_id
+  const ex  = map[cid]
+  const src = tag.source_photo
+  const sources = ex
+    ? [...new Set([...(ex.sources || []), src].filter(Boolean))]
+    : [src].filter(Boolean)
+
+  if (!ex) {
+    // First detection of this component
+    return {
+      ...map,
+      [cid]: {
+        component_id:   cid,
+        display_name:   tag.display_name || cid,
+        present:        tag.present,
+        condition:      tag.condition,
+        severity:       tag.severity,
+        confidence:     tag.confidence,
+        evidence:       tag.evidence,
+        sources,
+        seller_note:    '',
+        orig_present:   tag.present,
+        orig_condition: tag.condition,
+        orig_severity:  tag.severity,
+      },
+    }
   }
+
+  if (tag.confidence > ex.confidence) {
+    // Better reading — update vision fields, keep seller edits
+    return {
+      ...map,
+      [cid]: {
+        ...ex,
+        present:        tag.present,
+        condition:      tag.condition,
+        severity:       tag.severity,
+        confidence:     tag.confidence,
+        evidence:       tag.evidence,
+        sources,
+        orig_present:   tag.present,
+        orig_condition: tag.condition,
+        orig_severity:  tag.severity,
+      },
+    }
+  }
+
+  // Lower confidence — just add source, keep everything else
+  return { ...map, [cid]: { ...ex, sources } }
 }
 
-function fieldEdited(tag) {
-  return (
-    tag.present   !== tag.orig_present   ||
-    tag.condition !== tag.orig_condition ||
-    tag.severity  !== tag.orig_severity  ||
-    tag.seller_note.trim() !== ''
-  )
+function mergeAllTags(tags) {
+  return tags.reduce((map, tag) => mergeSingleTag(map, tag), {})
 }
 
-// Resize to max 1600px on longest side; returns a new File (JPEG 85%)
+// ── image helpers ────────────────────────────────────────────────────────────
+
 async function downscale(file, maxPx = 1600) {
   return new Promise((resolve) => {
-    const img = new Image()
+    const img    = new Image()
     const blobUrl = URL.createObjectURL(file)
     img.onload = () => {
       URL.revokeObjectURL(blobUrl)
       const { naturalWidth: w, naturalHeight: h } = img
       if (w <= maxPx && h <= maxPx) { resolve(file); return }
-      const scale = maxPx / Math.max(w, h)
-      const canvas = document.createElement('canvas')
+      const scale   = maxPx / Math.max(w, h)
+      const canvas  = document.createElement('canvas')
       canvas.width  = Math.round(w * scale)
       canvas.height = Math.round(h * scale)
       canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
@@ -95,33 +131,50 @@ async function downscale(file, maxPx = 1600) {
   })
 }
 
-// Retry fn up to maxAttempts times with exponential backoff (1s, 2s, 4s)
 async function withRetry(fn, maxAttempts = 3) {
   let lastErr
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  for (let i = 0; i < maxAttempts; i++) {
     try { return await fn() }
     catch (err) {
       lastErr = err
-      if (attempt < maxAttempts - 1) {
-        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)))
-      }
+      if (i < maxAttempts - 1) await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)))
     }
   }
   throw lastErr
 }
 
-// ---- component --------------------------------------------------------------
+// ── component ────────────────────────────────────────────────────────────────
 
 export default function PhotoStep({ sessionId, onDone }) {
-  const [photos, setPhotos]               = useState([])
+  const [photos, setPhotos]             = useState([])
+  const [componentMap, setComponentMap] = useState({})
+  const [resumedFromSession, setResumedFromSession] = useState(false)
+  const [loadingResume, setLoadingResume]           = useState(true)
   const [unconfirmedAnswers, setUnconfirmedAnswers] = useState({})
-  const inputRef = useRef()
-
-  // Sequential queue: { idx, file, room_zone }[]
+  const inputRef   = useRef()
   const queueRef   = useRef([])
   const runningRef = useRef(false)
 
-  // ---- queue drain ----------------------------------------------------------
+  // ── load existing tags from Supabase on mount ──────────────────────────────
+  useEffect(() => {
+    async function loadExisting() {
+      try {
+        const session = await getSession(sessionId)
+        const tags    = session.photo_tags || []
+        if (tags.length > 0) {
+          setComponentMap(mergeAllTags(tags))
+          setResumedFromSession(true)
+        }
+      } catch (_) {
+        // silent — fall through to fresh upload
+      } finally {
+        setLoadingResume(false)
+      }
+    }
+    loadExisting()
+  }, [sessionId])
+
+  // ── sequential queue ──────────────────────────────────────────────────────
   const drainQueue = useCallback(async () => {
     if (runningRef.current) return
     const item = queueRef.current.shift()
@@ -129,19 +182,15 @@ export default function PhotoStep({ sessionId, onDone }) {
     runningRef.current = true
 
     const { idx, file, room_zone } = item
-
-    // Mark tagging
-    setPhotos(prev => prev.map((p, i) =>
-      i === idx ? { ...p, status: 'tagging', error: null } : p
-    ))
+    setPhotos(prev => prev.map((p, i) => i === idx ? { ...p, status: 'tagging', error: null } : p))
 
     try {
       const small  = await downscale(file)
       const result = await withRetry(() => tagPhoto(sessionId, small, room_zone), 3)
-      const editedTags = result.tags.map(initEditedTag)
       setPhotos(prev => prev.map((p, i) =>
-        i === idx ? { ...p, status: 'done', rawTags: result.tags, editedTags, error: null } : p
+        i === idx ? { ...p, status: 'done', tagCount: result.tags.length, error: null } : p
       ))
+      setComponentMap(prev => result.tags.reduce((m, tag) => mergeSingleTag(m, tag), prev))
     } catch (err) {
       setPhotos(prev => prev.map((p, i) =>
         i === idx ? { ...p, status: 'error', error: err.message } : p
@@ -149,42 +198,32 @@ export default function PhotoStep({ sessionId, onDone }) {
     }
 
     runningRef.current = false
-    // Process next item in queue (if any)
     if (queueRef.current.length > 0) drainQueue()
   }, [sessionId])
 
-  // ---- file selection -------------------------------------------------------
+  // ── file input ────────────────────────────────────────────────────────────
   function handleFiles(e) {
     const files = Array.from(e.target.files)
     if (!files.length) return
     const entries = files.map(f => ({
-      file: f,
-      url: URL.createObjectURL(f),
-      room_zone: '',
-      status: 'needs_room',
-      rawTags: [],
-      editedTags: [],
-      error: null,
+      file: f, url: URL.createObjectURL(f), room_zone: '',
+      status: 'needs_room', tagCount: 0, error: null,
     }))
     setPhotos(prev => [...prev, ...entries])
     e.target.value = ''
   }
 
-  // ---- room assignment → enqueue -------------------------------------------
   function setRoom(idx, room_zone) {
-    setPhotos(prev => prev.map((p, i) => i === idx ? { ...p, room_zone } : p))
-    if (room_zone) {
-      // Get the file from current state
-      setPhotos(prev => {
-        const file = prev[idx].file
-        queueRef.current.push({ idx, file, room_zone })
+    setPhotos(prev => {
+      const updated = prev.map((p, i) => i === idx ? { ...p, room_zone } : p)
+      if (room_zone) {
+        queueRef.current.push({ idx, file: updated[idx].file, room_zone })
         drainQueue()
-        return prev
-      })
-    }
+      }
+      return updated
+    })
   }
 
-  // ---- manual retry --------------------------------------------------------
   function retag(idx) {
     setPhotos(prev => {
       const p = prev[idx]
@@ -198,115 +237,105 @@ export default function PhotoStep({ sessionId, onDone }) {
   function removePhoto(idx) {
     setPhotos(prev => {
       URL.revokeObjectURL(prev[idx].url)
-      // Remove from queue if pending
-      queueRef.current = queueRef.current.filter(item => item.idx !== idx)
-      // Re-index remaining items in queue
-      const removed = prev.filter((_, i) => i !== idx)
-      queueRef.current = queueRef.current.map(item => ({
-        ...item,
-        idx: item.idx > idx ? item.idx - 1 : item.idx,
-      }))
-      return removed
+      queueRef.current = queueRef.current
+        .filter(item => item.idx !== idx)
+        .map(item => ({ ...item, idx: item.idx > idx ? item.idx - 1 : item.idx }))
+      return prev.filter((_, i) => i !== idx)
     })
   }
 
-  // ---- table edits ---------------------------------------------------------
-  function editTag(photoIdx, tagIdx, field, value) {
-    setPhotos(prev => prev.map((p, pi) => {
-      if (pi !== photoIdx) return p
-      const editedTags = p.editedTags.map((t, ti) => {
-        if (ti !== tagIdx) return t
-        const updated = { ...t, [field]: value }
-        updated.seller_confirmed = fieldEdited(updated)
-        return updated
-      })
-      return { ...p, editedTags }
-    }))
+  // ── component map edits ───────────────────────────────────────────────────
+  function editComponent(cid, field, value) {
+    setComponentMap(prev => ({ ...prev, [cid]: { ...prev[cid], [field]: value } }))
   }
 
-  // ---- derived state -------------------------------------------------------
-  const allDone = photos.length > 0 && photos.every(p => p.status === 'done' || p.status === 'error')
-  const allEditedTags = photos.flatMap(p => p.editedTags)
-  const lowConfAbsent = allEditedTags
-    .filter(t => !t.present && t.confidence < 0.75)
-    .map(t => t.component_id)
-  const untaggedAlways = [...ALWAYS_COMMON].filter(cid => !allEditedTags.some(t => t.component_id === cid))
+  // ── derived state ─────────────────────────────────────────────────────────
+  const taggingCount = photos.filter(p => p.status === 'tagging').length
+  const queueDepth   = queueRef.current.length
+  const allPhotoDone = photos.length === 0 ||
+    photos.every(p => ['done','error','needs_room'].includes(p.status))
+
+  const components = Object.values(componentMap).sort((a, b) => b.confidence - a.confidence)
+  const showReview = !loadingResume && (resumedFromSession || (allPhotoDone && components.length > 0))
+
+  const lowConfAbsent  = components.filter(c => !c.present && c.confidence < 0.75).map(c => c.component_id)
+  const untaggedAlways = [...ALWAYS_COMMON].filter(cid => !(cid in componentMap))
   const unconfirmedCids = [...new Set([...lowConfAbsent, ...untaggedAlways])]
 
-  // queue depth for status line
-  const queueDepth = queueRef.current.length
-  const taggingCount = photos.filter(p => p.status === 'tagging').length
-
-  // ---- continue ------------------------------------------------------------
+  // ── continue ──────────────────────────────────────────────────────────────
   function handleContinue() {
-    const photoTagsForCapture = photos.flatMap(p =>
-      p.rawTags.map(t => ({
-        component_id: t.component_id,
-        tag: t.condition !== 'unknown' ? t.condition : (t.present ? 'present' : 'not_present'),
-        confidence: t.confidence,
-        source_photo: t.source_photo || p.file.name,
-      }))
-    )
+    const photoTagsForCapture = components.map(c => ({
+      component_id: c.component_id,
+      tag: c.condition !== 'unknown' ? c.condition : (c.present ? 'present' : 'not_present'),
+      confidence:   c.confidence,
+      source_photo: (c.sources || [])[0] || 'merged',
+    }))
 
     const sellerConfirmedTags = []
-    for (const t of allEditedTags) {
-      const entry = { component_id: t.component_id }
+    for (const c of components) {
+      const entry = { component_id: c.component_id }
       let hasEdit = false
-      if (t.present !== t.orig_present)     { entry.present    = t.present;    hasEdit = true }
-      if (t.condition !== t.orig_condition) { entry.condition  = t.condition;  hasEdit = true }
-      if (t.severity  !== t.orig_severity)  { entry.severity   = t.severity;   hasEdit = true }
-      if (t.seller_note.trim())             { entry.seller_note = t.seller_note.trim(); hasEdit = true }
+      if (c.present   !== c.orig_present)   { entry.present    = c.present;    hasEdit = true }
+      if (c.condition !== c.orig_condition) { entry.condition  = c.condition;  hasEdit = true }
+      if (c.severity  !== c.orig_severity)  { entry.severity   = c.severity;   hasEdit = true }
+      if (c.seller_note.trim())             { entry.seller_note = c.seller_note.trim(); hasEdit = true }
       if (hasEdit) sellerConfirmedTags.push(entry)
     }
 
     const absencePresenceAnswers = Object.entries(unconfirmedAnswers).map(([cid, val]) => ({
-      question_id: `P-UNCONFIRMED-${cid}`,
-      component_id: cid,
-      answer: val,
+      question_id: `P-UNCONFIRMED-${cid}`, component_id: cid, answer: val,
     }))
 
     onDone({ photoTagsForCapture, sellerConfirmedTags, absencePresenceAnswers })
   }
 
-  // ---- render --------------------------------------------------------------
+  // ── render ────────────────────────────────────────────────────────────────
+  if (loadingResume) {
+    return <p style={{ fontSize: 13, color: '#888' }}>Loading…</p>
+  }
+
   return (
     <div>
-      <h2 style={{ fontSize: 16, marginBottom: 8 }}>Upload Photos</h2>
-      <p style={{ fontSize: 13, color: '#555', marginBottom: 16 }}>
-        Label each photo with its room. Photos are sent one at a time and downscaled before upload.
-        Vision tags condition only — you review and correct every field.
-      </p>
+      <h2 style={{ fontSize: 16, marginBottom: 8 }}>Photos</h2>
 
-      <input ref={inputRef} type="file" accept="image/*" multiple
-        style={{ display: 'none' }} onChange={handleFiles} />
-      <button style={btnStyle} onClick={() => inputRef.current.click()}>Add photos</button>
-
-      {/* Queue status */}
-      {(taggingCount > 0 || queueDepth > 0) && (
-        <p style={{ fontSize: 12, color: '#555', marginTop: 8 }}>
-          Tagging in progress — processing one at a time.
-          {queueDepth > 0 && ` ${queueDepth} photo${queueDepth !== 1 ? 's' : ''} waiting in queue.`}
-        </p>
+      {resumedFromSession && photos.length === 0 && (
+        <div style={resumeBanner}>
+          <strong>Loaded {components.length} components</strong> from your previous photo analysis.
+          Review and correct below, or add more photos.
+        </div>
       )}
 
+      {/* ── upload section ── */}
+      <div style={{ marginBottom: 16 }}>
+        <input ref={inputRef} type="file" accept="image/*" multiple
+          style={{ display: 'none' }} onChange={handleFiles} />
+        <button style={btnStyle} onClick={() => inputRef.current.click()}>
+          {resumedFromSession ? 'Add more photos' : 'Add photos'}
+        </button>
+        {(taggingCount > 0 || queueDepth > 0) && (
+          <span style={{ fontSize: 12, color: '#555', marginLeft: 12 }}>
+            Tagging one at a time…{queueDepth > 0 && ` ${queueDepth} waiting`}
+          </span>
+        )}
+      </div>
+
+      {/* ── per-photo status cards ── */}
       {photos.map((p, pi) => (
         <div key={pi} style={cardStyle}>
           <img src={p.url} alt={p.file.name} style={thumbStyle} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
               <span style={{ fontSize: 13, fontWeight: 500, wordBreak: 'break-all', flex: 1 }}>
                 {p.file.name}
               </span>
-              <button
-                onClick={() => removePhoto(pi)}
-                disabled={p.status === 'tagging'}
-                title="Remove this photo"
-                style={{ marginLeft: 8, fontSize: 11, color: '#c00', background: 'none', border: 'none', cursor: p.status === 'tagging' ? 'not-allowed' : 'pointer', flexShrink: 0, padding: '0 2px' }}>
+              <button onClick={() => removePhoto(pi)} disabled={p.status === 'tagging'}
+                title="Remove photo"
+                style={{ marginLeft: 8, fontSize: 11, color: '#c00', background: 'none', border: 'none', cursor: p.status === 'tagging' ? 'not-allowed' : 'pointer', flexShrink: 0 }}>
                 ✕ Remove
               </button>
             </div>
 
-            <label style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+            <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
               Room:{' '}
               <select value={p.room_zone} onChange={e => setRoom(pi, e.target.value)}
                 style={{ fontSize: 12 }} disabled={p.status === 'tagging'}>
@@ -316,161 +345,169 @@ export default function PhotoStep({ sessionId, onDone }) {
             </label>
 
             {p.status === 'needs_room' && <span style={badge('gray')}>Pick a room to start tagging</span>}
-            {p.status === 'tagging'    && <span style={badge('blue')}>Tagging… (downscaled, retries enabled)</span>}
-            {p.status === 'error'      && (
-              <div>
-                <span style={{ color: '#c00', fontSize: 12 }}>
-                  Failed after 3 attempts: {p.error}
-                </span>
-                <button style={{ marginLeft: 8, fontSize: 11, cursor: 'pointer' }}
-                  onClick={() => retag(pi)}>
-                  Retry
-                </button>
-              </div>
+            {p.status === 'tagging'    && <span style={badge('blue')}>Tagging…</span>}
+            {p.status === 'done'       && (
+              <span style={badge('green')}>
+                {p.tagCount} component{p.tagCount !== 1 ? 's' : ''} detected
+                {' · '}
+                <button style={{ fontSize: 11, background: 'none', border: 'none', cursor: 'pointer', color: '#155724', padding: 0 }}
+                  onClick={() => retag(pi)}>re-tag</button>
+              </span>
             )}
-
-            {p.status === 'done' && (
-              <div>
-                <span style={badge('green')}>
-                  {p.editedTags.length} component{p.editedTags.length !== 1 ? 's' : ''} detected
-                </span>
-                {p.editedTags.filter(t => t.seller_confirmed).length > 0 && (
-                  <span style={{ ...badge('orange'), marginLeft: 6 }}>
-                    {p.editedTags.filter(t => t.seller_confirmed).length} corrected
-                  </span>
-                )}
-                <button style={{ marginLeft: 8, fontSize: 11, cursor: 'pointer' }}
-                  onClick={() => retag(pi)}>
-                  Re-tag
-                </button>
-
-                {p.editedTags.length === 0
-                  ? <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>Nothing detected. Change room or re-tag.</p>
-                  : (
-                    <table style={tableStyle}>
-                      <thead>
-                        <tr>
-                          <th style={th}>Component</th>
-                          <th style={th}>Present</th>
-                          <th style={th}>Condition <em style={{fontWeight:400}}>(vision draft)</em></th>
-                          <th style={th}>Severity</th>
-                          <th style={th}>Conf</th>
-                          <th style={th}>Evidence (vision)</th>
-                          <th style={th}>Your note</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {p.editedTags.map((t, ti) => (
-                          <tr key={ti} style={{ background: t.seller_confirmed ? '#fffbe6' : 'transparent' }}>
-                            <td style={td} title={t.component_id}>
-                              {t.display_name || t.component_id}
-                            </td>
-                            <td style={td}>
-                              <select style={cellSelect}
-                                value={t.present ? 'yes' : 'no'}
-                                onChange={e => editTag(pi, ti, 'present', e.target.value === 'yes')}>
-                                <option value="yes">yes</option>
-                                <option value="no">no</option>
-                              </select>
-                            </td>
-                            <td style={td}>
-                              <select style={cellSelect} value={t.condition}
-                                onChange={e => editTag(pi, ti, 'condition', e.target.value)}>
-                                {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                              </select>
-                            </td>
-                            <td style={td}>
-                              <select style={cellSelect} value={t.severity}
-                                onChange={e => editTag(pi, ti, 'severity', e.target.value)}>
-                                {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
-                              </select>
-                            </td>
-                            <td style={{ ...td, fontSize: 11, color: t.seller_confirmed ? '#b45309' : '#555' }}>
-                              {t.seller_confirmed ? 'seller-confirmed' : `${(t.confidence*100).toFixed(0)}%`}
-                            </td>
-                            <td style={{ ...td, fontSize: 11, color: '#777', maxWidth: 180 }}>{t.evidence}</td>
-                            <td style={td}>
-                              <input type="text" style={{ fontSize: 11, width: 130 }}
-                                placeholder="optional note"
-                                value={t.seller_note}
-                                onChange={e => editTag(pi, ti, 'seller_note', e.target.value)} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-              </div>
+            {p.status === 'error' && (
+              <span style={{ fontSize: 12, color: '#c00' }}>
+                Failed after 3 attempts: {p.error}{' '}
+                <button style={{ fontSize: 11, cursor: 'pointer' }} onClick={() => retag(pi)}>Retry</button>
+              </span>
             )}
           </div>
         </div>
       ))}
 
-      {/* Unconfirmed-absence panel */}
-      {allDone && unconfirmedCids.length > 0 && (
-        <div style={{ border: '1px solid #ffc107', borderRadius: 4, padding: 14, marginTop: 16, background: '#fffbe6' }}>
-          <strong style={{ fontSize: 13 }}>Components we couldn't confirm ({unconfirmedCids.length})</strong>
-          <p style={{ fontSize: 12, color: '#666', margin: '4px 0 10px' }}>
-            Vision didn't detect these, or detected them with low confidence. Does the home have them?
+      {photos.length > 0 && !allPhotoDone && (
+        <p style={{ fontSize: 13, color: '#888', margin: '12px 0' }}>
+          Waiting for all photos to finish tagging…
+        </p>
+      )}
+
+      {/* ── component review table (deduplicated) ── */}
+      {showReview && (
+        <div style={{ marginTop: 24 }}>
+          <h3 style={{ fontSize: 14, marginBottom: 4 }}>
+            Component review — {components.length} detected
+          </h3>
+          <p style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>
+            Vision's assessment is a draft. Correct any field — your edits override vision.
+            "Present" means this component exists in the home.
           </p>
-          {unconfirmedCids.map(cid => (
-            <div key={cid} style={{ marginBottom: 8, fontSize: 13 }}>
-              <code style={{ fontSize: 11 }}>{cid}</code>
-              {' — '}
-              <label style={{ marginRight: 12 }}>
-                <input type="radio" name={`unc_${cid}`} value="yes"
-                  checked={unconfirmedAnswers[cid] === 'yes'}
-                  onChange={() => setUnconfirmedAnswers(p => ({ ...p, [cid]: 'yes' }))} />
-                {' '}yes
-              </label>
-              <label style={{ marginRight: 12 }}>
-                <input type="radio" name={`unc_${cid}`} value="no"
-                  checked={unconfirmedAnswers[cid] === 'no'}
-                  onChange={() => setUnconfirmedAnswers(p => ({ ...p, [cid]: 'no' }))} />
-                {' '}no
-              </label>
-              <label>
-                <input type="radio" name={`unc_${cid}`} value="unsure"
-                  checked={unconfirmedAnswers[cid] === 'unsure'}
-                  onChange={() => setUnconfirmedAnswers(p => ({ ...p, [cid]: 'unsure' }))} />
-                {' '}not sure
-              </label>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={tableStyle}>
+              <thead>
+                <tr>
+                  <th style={th}>Component</th>
+                  <th style={th}>Present</th>
+                  <th style={th}>Condition <em style={{ fontWeight: 400 }}>(vision draft)</em></th>
+                  <th style={th}>Severity</th>
+                  <th style={th}>Conf</th>
+                  <th style={th}>Evidence</th>
+                  <th style={th}>Photos</th>
+                  <th style={th}>Your note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {components.map(c => {
+                  const edited = (
+                    c.present   !== c.orig_present   ||
+                    c.condition !== c.orig_condition ||
+                    c.severity  !== c.orig_severity  ||
+                    c.seller_note.trim() !== ''
+                  )
+                  return (
+                    <tr key={c.component_id} style={{ background: edited ? '#fffbe6' : 'transparent' }}>
+                      <td style={td} title={c.component_id}>{c.display_name}</td>
+                      <td style={td}>
+                        <select style={cellSelect}
+                          value={c.present ? 'yes' : 'no'}
+                          onChange={e => editComponent(c.component_id, 'present', e.target.value === 'yes')}>
+                          <option value="yes">yes</option>
+                          <option value="no">no</option>
+                        </select>
+                      </td>
+                      <td style={td}>
+                        <select style={cellSelect} value={c.condition}
+                          onChange={e => editComponent(c.component_id, 'condition', e.target.value)}>
+                          {CONDITIONS.map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      </td>
+                      <td style={td}>
+                        <select style={cellSelect} value={c.severity}
+                          onChange={e => editComponent(c.component_id, 'severity', e.target.value)}>
+                          {SEVERITIES.map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      </td>
+                      <td style={{ ...td, fontSize: 11, color: edited ? '#b45309' : '#555' }}>
+                        {edited ? 'edited' : `${(c.confidence * 100).toFixed(0)}%`}
+                      </td>
+                      <td style={{ ...td, fontSize: 11, color: '#777', maxWidth: 200 }}>{c.evidence}</td>
+                      <td style={{ ...td, fontSize: 11, color: '#888' }}>
+                        {(c.sources || []).length > 0
+                          ? `${c.sources.length} photo${c.sources.length !== 1 ? 's' : ''}`
+                          : '—'}
+                      </td>
+                      <td style={td}>
+                        <input type="text" style={{ fontSize: 11, width: 130 }}
+                          placeholder="optional note"
+                          value={c.seller_note}
+                          onChange={e => editComponent(c.component_id, 'seller_note', e.target.value)} />
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* ── unconfirmed absence panel ── */}
+          {unconfirmedCids.length > 0 && (
+            <div style={{ border: '1px solid #ffc107', borderRadius: 4, padding: 14, marginTop: 16, background: '#fffbe6' }}>
+              <strong style={{ fontSize: 13 }}>
+                {unconfirmedCids.length} component{unconfirmedCids.length !== 1 ? 's' : ''} not detected — does this home have them?
+              </strong>
+              <p style={{ fontSize: 12, color: '#666', margin: '4px 0 10px' }}>
+                Vision didn't see these clearly. Answer to include them in the analysis.
+              </p>
+              {unconfirmedCids.map(cid => (
+                <div key={cid} style={{ marginBottom: 6, fontSize: 13 }}>
+                  <code style={{ fontSize: 11 }}>{cid}</code>
+                  {' — '}
+                  {['yes','no','unsure'].map(val => (
+                    <label key={val} style={{ marginRight: 12 }}>
+                      <input type="radio" name={`unc_${cid}`} value={val}
+                        checked={unconfirmedAnswers[cid] === val}
+                        onChange={() => setUnconfirmedAnswers(p => ({ ...p, [cid]: val }))} />
+                      {' '}{val}
+                    </label>
+                  ))}
+                </div>
+              ))}
             </div>
-          ))}
+          )}
+
+          <div style={{ marginTop: 20 }}>
+            <button style={btnStyle} onClick={handleContinue}>
+              Continue to questionnaire
+            </button>
+          </div>
         </div>
       )}
 
-      <div style={{ marginTop: 20 }}>
-        {photos.length === 0 && (
-          <button style={{ ...btnStyle, background: '#eee', marginRight: 8 }}
+      {/* fresh start, no photos yet */}
+      {!resumedFromSession && photos.length === 0 && (
+        <div style={{ marginTop: 12 }}>
+          <button style={{ ...btnStyle, background: '#eee' }}
             onClick={() => onDone({ photoTagsForCapture: [], sellerConfirmedTags: [], absencePresenceAnswers: [] })}>
             Skip photos
           </button>
-        )}
-        {allDone && (
-          <button style={btnStyle} onClick={handleContinue}>
-            Continue to questionnaire
-          </button>
-        )}
-        {photos.length > 0 && !allDone && (
-          <p style={{ fontSize: 13, color: '#888', marginTop: 8 }}>
-            Waiting for all photos to finish tagging…
-          </p>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }
 
-const btnStyle    = { padding: '8px 20px', fontSize: 14, cursor: 'pointer' }
-const cardStyle   = { display: 'flex', gap: 12, marginTop: 16, padding: 12, border: '1px solid #ddd', borderRadius: 4 }
-const thumbStyle  = { width: 80, height: 80, objectFit: 'cover', borderRadius: 2, flexShrink: 0 }
-const tableStyle  = { borderCollapse: 'collapse', width: '100%', fontSize: 12, marginTop: 8 }
-const th          = { textAlign: 'left', padding: '3px 6px', borderBottom: '1px solid #ccc', fontWeight: 600, whiteSpace: 'nowrap' }
-const td          = { padding: '3px 6px', borderBottom: '1px solid #eee', verticalAlign: 'middle' }
-const cellSelect  = { fontSize: 11, padding: '1px 2px' }
+const btnStyle   = { padding: '8px 20px', fontSize: 14, cursor: 'pointer' }
+const cardStyle  = { display: 'flex', gap: 12, marginTop: 12, padding: 10, border: '1px solid #ddd', borderRadius: 4 }
+const thumbStyle = { width: 64, height: 64, objectFit: 'cover', borderRadius: 2, flexShrink: 0 }
+const tableStyle = { borderCollapse: 'collapse', width: '100%', fontSize: 12 }
+const th         = { textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid #ccc', fontWeight: 600, whiteSpace: 'nowrap', background: '#f9f9f9' }
+const td         = { padding: '3px 6px', borderBottom: '1px solid #eee', verticalAlign: 'middle' }
+const cellSelect = { fontSize: 11, padding: '1px 2px' }
+const resumeBanner = {
+  background: '#e8f4fd', border: '1px solid #bee3f8', borderRadius: 4,
+  padding: '10px 14px', marginBottom: 16, fontSize: 13,
+}
 const badge = (color) => ({
-  display: 'inline-block', fontSize: 11, padding: '1px 7px', borderRadius: 10, marginBottom: 6,
-  background: color === 'green' ? '#d4edda' : color === 'blue' ? '#cce5ff' : color === 'orange' ? '#fff3cd' : '#eee',
-  color:      color === 'green' ? '#155724' : color === 'blue' ? '#004085' : color === 'orange' ? '#856404' : '#555',
+  display: 'inline-block', fontSize: 11, padding: '1px 7px', borderRadius: 10,
+  background: color === 'green' ? '#d4edda' : color === 'blue' ? '#cce5ff' : '#eee',
+  color:      color === 'green' ? '#155724' : color === 'blue' ? '#004085' : '#555',
 })

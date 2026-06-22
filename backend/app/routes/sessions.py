@@ -73,14 +73,20 @@ def create_session(body: SessionCreateRequest):
 
 @router.get("/{session_id}")
 def get_session(session_id: str):
-    """Return session metadata and current status."""
+    """Return session metadata and current status.
+    Includes photo_tags extracted from capture_submission so the frontend
+    can resume the photo review step without re-tagging."""
     db = get_db()
     result = db.table(TABLE).select(
         "id, status, address, property_key, listing_month, "
-        "commission_rate, has_hoa, seller_inputs, created_at, updated_at"
+        "commission_rate, has_hoa, seller_inputs, created_at, updated_at, "
+        "capture_submission"
     ).eq("id", session_id).maybe_single().execute()
 
     if not result.data:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
 
-    return result.data
+    data = dict(result.data)
+    capture_sub = data.pop("capture_submission", None) or {}
+    data["photo_tags"] = capture_sub.get("photo_tags", [])
+    return data

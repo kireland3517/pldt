@@ -6,6 +6,12 @@ async function json(res) {
   catch { throw new Error(`Non-JSON response (${res.status}): ${text.slice(0, 200)}`) }
 }
 
+export async function getSession(sessionId) {
+  const res = await fetch(`${BASE}/session/${sessionId}`)
+  if (!res.ok) throw new Error(res.statusText)
+  return json(res)
+}
+
 export async function createSession(address) {
   const res = await fetch(`${BASE}/session`, {
     method: 'POST',
