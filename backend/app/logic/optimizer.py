@@ -58,10 +58,13 @@ def build_plans(
         dom_result = estimate_dom(dom_data, level, listing_month)
         carrying   = estimate_carrying_cost(dom_result, property_inputs, seller_inputs)
 
-        # Adjusted sale price: as-is base + recoup value of plan upgrades
-        adjusted_price = _adjusted_sale_price(
-            valuation["mid"], enriched_rows, level
+        # Adjusted sale price: as-is base + recoup value of plan upgrades,
+        # capped at the comps ceiling so we never project above market top.
+        ceiling = valuation.get("high", float("inf"))
+        adjusted_price, raw_uplift, cap_was_binding = _adjusted_sale_price(
+            valuation["mid"], ceiling, enriched_rows, level
         )
+        value_lift_capped = round(adjusted_price - valuation["mid"], 2)
 
         adjusted_val = dict(valuation)
         adjusted_val["mid"] = adjusted_price
@@ -83,9 +86,12 @@ def build_plans(
         included = _items_for_level(enriched_rows, floor_result, level)
 
         plans[level] = {
-            "plan_level":          level,
-            "adjusted_sale_price": round(adjusted_price, 2),
-            "as_is_price":         valuation["mid"],
+            "plan_level":               level,
+            "adjusted_sale_price":      round(adjusted_price, 2),
+            "as_is_price":              valuation["mid"],
+            "improved_listing_ceiling": round(ceiling, 2),
+            "value_lift_capped":        value_lift_capped,
+            "value_lift_cap_binding":   cap_was_binding,
             "dom":                 dom_result,
             "carrying":            carrying,
             "net_proceeds":        np_result,
@@ -103,9 +109,14 @@ def build_plans(
     return plans
 
 
-def _adjusted_sale_price(base_mid: float, enriched_rows: list, level: str) -> float:
+def _adjusted_sale_price(
+    base_mid: float,
+    ceiling: float,
+    enriched_rows: list,
+    level: str,
+) -> tuple:
     """
-    Estimate value uplift for a given plan level.
+    Estimate value uplift for a given plan level, capped at comp ceiling.
 
     Defect-clearing items: their "discount removal" is already baked into
     the base as-is valuation (the comps reflect move-in-ready homes; a
@@ -116,6 +127,9 @@ def _adjusted_sale_price(base_mid: float, enriched_rows: list, level: str) -> fl
     Upgrades: library recoup_pct fraction of mid repair cost.
 
     For the "leaner" plan (Floor only), only defect-clearing uplift applies.
+
+    Returns (adjusted_price, uncapped_uplift, cap_was_binding).
+    cap_was_binding is True when the raw uplift would have exceeded ceiling.
     """
     uplift = 0.0
 
@@ -145,7 +159,11 @@ def _adjusted_sale_price(base_mid: float, enriched_rows: list, level: str) -> fl
         if include:
             uplift += mid * recoup_pct
 
-    return base_mid + uplift
+    raw_price       = base_mid + uplift
+    adjusted_price  = min(raw_price, ceiling)
+    cap_was_binding = raw_price > ceiling
+
+    return adjusted_price, uplift, cap_was_binding
 
 
 def _items_for_level(enriched_rows: list, floor_result: dict, level: str) -> list:

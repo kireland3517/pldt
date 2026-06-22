@@ -354,6 +354,17 @@ export default function ResultsStep({ sessionId }) {
                 <div style={{ fontSize: 15, fontWeight: 700, color: isNeg ? '#c00' : '#1a7f37' }}>
                   {fmt(net.net_proceeds)}
                 </div>
+                {p.value_lift_capped > 0 && (
+                  <div style={{ fontSize: 11, color: '#1a7f37', marginTop: 2 }}>
+                    +{fmt(p.value_lift_capped)} est. value lift
+                    {p.value_lift_cap_binding && (
+                      <span title={`Capped at comp ceiling ${fmt(p.improved_listing_ceiling)}`}
+                        style={{ marginLeft: 4, color: '#b45309', cursor: 'default' }}>
+                        ⚑ capped
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div style={{ fontSize: 11, color: '#777', marginTop: 4 }}>
                   {p.dom?.estimated_dom} days est. · {p.item_count} items
                 </div>
