@@ -33,6 +33,11 @@ export default function AddressStep({ onDone }) {
         </p>
       </div>
 
+      <p style={{ fontSize: 12, color: '#888', marginBottom: 20, lineHeight: 1.5 }}>
+        We need to establish your home's baseline first. After these upfront questions,
+        we'll only ask something if it tightens your financial estimates.
+      </p>
+
       <form onSubmit={submit}>
         <label style={labelStyle}>
           Your home's address

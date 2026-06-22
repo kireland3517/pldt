@@ -153,7 +153,17 @@ export default function QuestionnaireStep({ sessionId, photoData, onDone }) {
       for (const q of visibleConstraints) {
         const val = answers[`CI_${q.question_id}`]
         if (!val) continue
-        if (q.question_id === 'C-PAYOFF')   sellerInputs.mortgage_payoff  = parseFloat(val) || 0
+        if (q.question_id === 'C-PAYOFF') {
+          // Val here is the summed total written by PayoffSplitRow.
+          // Also persist the breakdown so results page can pre-fill each field.
+          const primary   = parseFloat(answers['CI_payoff_primary']   || '0') || 0
+          const secondary = parseFloat(answers['CI_payoff_secondary'] || '0') || 0
+          const other     = parseFloat(answers['CI_payoff_other']     || '0') || 0
+          sellerInputs.mortgage_payoff  = primary + secondary + other
+          sellerInputs.payoff_primary   = primary
+          sellerInputs.payoff_secondary = secondary
+          sellerInputs.payoff_other     = other
+        }
         if (q.question_id === 'C-TIMELINE') sellerInputs.timeline         = val
         if (q.question_id === 'C-FUND-1')   sellerInputs.can_fund_upfront = val === 'yes'
         if (q.question_id === 'C-FUND-2')   sellerInputs.can_fund_financed = val === 'yes'
@@ -241,10 +251,11 @@ export default function QuestionnaireStep({ sessionId, photoData, onDone }) {
       {/* Constraints — branching */}
       <section style={sectionStyle}>
         <h3 style={h3}>Your situation</h3>
-        {visibleConstraints.map(q => (
-          <QuestionRow key={q.question_id} q={q} prefix="CI"
-            answers={answers} onAnswer={answer} />
-        ))}
+        {visibleConstraints.map(q =>
+          q.question_id === 'C-PAYOFF'
+            ? <PayoffSplitRow key={q.question_id} answers={answers} onAnswer={answer} />
+            : <QuestionRow key={q.question_id} q={q} prefix="CI" answers={answers} onAnswer={answer} />
+        )}
       </section>
 
       {error && <p style={{ color: 'red', marginBottom: 8 }}>{error}</p>}
@@ -252,6 +263,52 @@ export default function QuestionnaireStep({ sessionId, photoData, onDone }) {
         {submitting ? 'Submitting…' : 'Submit and see report'}
       </button>
     </form>
+  )
+}
+
+function PayoffSplitRow({ answers, onAnswer }) {
+  function update(key, raw) {
+    onAnswer(key, raw)
+    // Recompute total and write to CI_C-PAYOFF so submit handler picks it up
+    const p = parseFloat(key === 'CI_payoff_primary'   ? raw : (answers['CI_payoff_primary']   || '0')) || 0
+    const s = parseFloat(key === 'CI_payoff_secondary' ? raw : (answers['CI_payoff_secondary'] || '0')) || 0
+    const o = parseFloat(key === 'CI_payoff_other'     ? raw : (answers['CI_payoff_other']     || '0')) || 0
+    onAnswer('CI_C-PAYOFF', String(p + s + o))
+  }
+
+  const total = (parseFloat(answers['CI_payoff_primary'] || '0') || 0)
+              + (parseFloat(answers['CI_payoff_secondary'] || '0') || 0)
+              + (parseFloat(answers['CI_payoff_other'] || '0') || 0)
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <label style={{ fontSize: 13, fontWeight: 500, display: 'block', marginBottom: 4 }}>
+        What's owed against your home?
+      </label>
+      <p style={{ fontSize: 12, color: '#666', margin: '0 0 10px', lineHeight: 1.5 }}>
+        Include all balances. Forgetting a HELOC, second mortgage, or lien is the most
+        common reason net proceeds come out wrong.
+      </p>
+      {[
+        { label: 'Primary mortgage balance',        key: 'CI_payoff_primary' },
+        { label: 'Second mortgage or HELOC',        key: 'CI_payoff_secondary' },
+        { label: 'Liens, unpaid taxes, or other',  key: 'CI_payoff_other' },
+      ].map(({ label, key }) => (
+        <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <span style={{ fontSize: 13, width: 230 }}>{label}</span>
+          <input type="number" min={0} step={1000}
+            placeholder="$0"
+            value={answers[key] || ''}
+            onChange={e => update(key, e.target.value)}
+            style={{ fontSize: 13, padding: '4px 6px', width: 130 }} />
+        </div>
+      ))}
+      {total > 0 && (
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#333', marginTop: 4 }}>
+          Total payoff: ${total.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+        </div>
+      )}
+    </div>
   )
 }
 
