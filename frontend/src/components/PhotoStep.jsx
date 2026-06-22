@@ -49,18 +49,18 @@ const ALWAYS_COMMON = new Set([
 // before a vision-detected defect can enter the mandatory Floor.
 // Default: OUT. Seller "yes" moves it IN. "no" or no answer = staged out.
 const FLOOR_ELIGIBLE = {
-  'ROOF-01':   { why: 'Lenders may require repairs or replacement before approving a buyer's loan.' },
-  'FND-01':    { why: 'Active water or structural movement is a safety concern and can block loan approval.' },
-  'GUT-01':    { why: 'Gutters causing water intrusion into the home are typically flagged by lenders.' },
-  'DECK-01':   { why: 'Open risers, a loose railing, or rot are safety hazards lenders may require fixed.' },
-  'PRCH-01':   { why: 'A missing or loose handrail and open risers are safety hazards.' },
-  'OUT-01':    { why: 'Missing outlet covers or a shock hazard are safety issues.' },
-  'GAR-01':    { why: 'A non-functional garage door is typically required by lenders to be working.' },
-  'HVAC-01':   { why: 'Lenders usually require a functioning HVAC system.' },
-  'WH-HTR-01': { why: 'Lenders typically require a functional, non-leaking water heater.' },
-  'ELEC-01':   { why: 'Exposed wiring, open junction boxes, or an unsafe panel are safety issues lenders will flag.' },
-  'PLMB-01':   { why: 'An active leak or non-functional water supply can block loan approval.' },
-  'DET-01':    { why: 'Smoke and CO detectors are required by most states and lenders.' },
+  'ROOF-01':   { why: "Lenders may require repairs or replacement before approving a buyer's loan." },
+  'FND-01':    { why: "Active water or structural movement is a safety concern and can block loan approval." },
+  'GUT-01':    { why: "Gutters causing water intrusion into the home are typically flagged by lenders." },
+  'DECK-01':   { why: "Open risers, a loose railing, or rot are safety hazards lenders may require fixed." },
+  'PRCH-01':   { why: "A missing or loose handrail and open risers are safety hazards." },
+  'OUT-01':    { why: "Missing outlet covers or a shock hazard are safety issues." },
+  'GAR-01':    { why: "A non-functional garage door is typically required by lenders to be working." },
+  'HVAC-01':   { why: "Lenders usually require a functioning HVAC system." },
+  'WH-HTR-01': { why: "Lenders typically require a functional, non-leaking water heater." },
+  'ELEC-01':   { why: "Exposed wiring, open junction boxes, or an unsafe panel are safety issues lenders will flag." },
+  'PLMB-01':   { why: "An active leak or non-functional water supply can block loan approval." },
+  'DET-01':    { why: "Smoke and CO detectors are required by most states and lenders." },
 }
 
 // Human-readable names for the absence panel (components not detected by vision)
