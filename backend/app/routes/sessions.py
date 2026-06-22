@@ -87,6 +87,11 @@ def get_session(session_id: str):
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
 
     data = dict(result.data)
-    capture_sub = data.pop("capture_submission", None) or {}
-    data["photo_tags"] = capture_sub.get("photo_tags", [])
+    capture_sub   = data.pop("capture_submission", None) or {}
+    seller_inputs = data.get("seller_inputs") or {}
+    # Prefer submitted photo_tags; fall back to draft saved during photo step
+    data["photo_tags"] = (
+        capture_sub.get("photo_tags", [])
+        or seller_inputs.get("_photo_tags_draft", [])
+    )
     return data

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
-import { tagPhoto, getSession } from '../api'
+import { tagPhoto, getSession, updateInputs } from '../api'
 
 const ROOM_ZONES = [
   { value: 'exterior_front',   label: 'Exterior — Front',
@@ -231,7 +231,22 @@ export default function PhotoStep({ sessionId, onDone }) {
       setPhotos(prev => prev.map((p, i) =>
         i === idx ? { ...p, status: 'done', tagCount: result.tags.length, error: null } : p
       ))
-      setComponentMap(prev => result.tags.reduce((m, tag) => mergeSingleTag(m, tag), prev))
+      setComponentMap(prev => {
+        const newMap = result.tags.reduce((m, tag) => mergeSingleTag(m, tag), prev)
+        // Fire-and-forget draft save so a reload can recover without re-tagging
+        const draft = Object.values(newMap).map(c => ({
+          component_id: c.component_id,
+          display_name: c.display_name || c.component_id,
+          present:      c.present,
+          condition:    c.condition,
+          severity:     c.severity,
+          confidence:   c.confidence,
+          evidence:     c.evidence,
+          source_photo: (c.sources || [])[0] || 'merged',
+        }))
+        updateInputs(sessionId, { seller_inputs: { _photo_tags_draft: draft } }).catch(() => {})
+        return newMap
+      })
     } catch (err) {
       setPhotos(prev => prev.map((p, i) =>
         i === idx ? { ...p, status: 'error', error: err.message } : p
