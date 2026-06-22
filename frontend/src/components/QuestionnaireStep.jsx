@@ -1,87 +1,83 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { getQuestions, submitCapture } from '../api'
 
-// Always ask these regardless of vision — photos can't show odor, panel access, etc.
-const ALWAYS_ASK = new Set(['Q-SMOKE-1', 'Q-ELEC-1'])
+// ── presence helpers ──────────────────────────────────────────────────────────
 
-function buildTagMap(photoTags) {
+function buildPhotoPresent(photoTagsForCapture) {
+  const s = new Set()
+  for (const t of photoTagsForCapture) {
+    if ((t.confidence ?? 1) >= 0.5) s.add(t.component_id)
+  }
+  return s
+}
+
+function buildSellerConfirmedPresent(sellerConfirmedTags) {
+  return new Set(
+    sellerConfirmedTags.filter(t => t.present === true).map(t => t.component_id)
+  )
+}
+
+function buildTagMap(photoTagsForCapture) {
   const map = {}
-  for (const tag of photoTags) {
-    if (!map[tag.component_id] || tag.confidence > map[tag.component_id].confidence) {
+  for (const tag of photoTagsForCapture) {
+    if (!map[tag.component_id] || (tag.confidence ?? 0) > (map[tag.component_id].confidence ?? 0)) {
       map[tag.component_id] = tag
     }
   }
   return map
 }
 
-function buildPresentSet(photoTagsForCapture, absencePresenceAnswers) {
-  const present = new Set()
-  for (const t of photoTagsForCapture) {
-    if (t.confidence >= 0.5) present.add(t.component_id)
+// Build map: cid → first presence question that maps to it
+function buildPresenceQMap(presenceQs) {
+  const m = {}
+  for (const q of presenceQs) {
+    const cids = Array.isArray(q.maps_to) ? q.maps_to : [q.maps_to].filter(Boolean)
+    for (const cid of cids) {
+      if (!m[cid]) m[cid] = q
+    }
   }
-  for (const a of absencePresenceAnswers) {
-    if (a.answer === 'yes') present.add(a.component_id)
-  }
-  return present
+  return m
 }
 
-// ── branching engine ──────────────────────────────────────────────────────────
-//
-// A question is visible if:
-//   (a) It is a branch target of another question → parent must be visible
-//       AND answered with the value that points to this question.
-//   (b) It is not a branch target → evaluate its `triggers` field:
-//       - starts with "intake_condition" → always show
-//       - contains component IDs (e.g. "DECK-01 present") → any of those
-//         component IDs must be in presentSet or sellerConfirmedPresent
-//
-// Branches whose values are action strings (e.g. "force_replace", "not_floor")
-// rather than question IDs are terminal — they don't gate any follow-up.
-
-function isVisible(q, allQs, presentSet, answers, sellerConfirmedPresent, prefix) {
-  // Find if any other question's branches point to this one
-  let parentQ = null
-  let triggeringAnswer = null
-  for (const pq of allQs) {
-    for (const [ans, target] of Object.entries(pq.branches || {})) {
-      if (target === q.question_id) {
-        parentQ = pq
-        triggeringAnswer = ans
-        break
-      }
-    }
-    if (parentQ) break
-  }
-
-  if (parentQ) {
-    // Branch target: parent must be visible AND answered with the triggering value
-    if (!isVisible(parentQ, allQs, presentSet, answers, sellerConfirmedPresent, prefix)) {
-      return false
-    }
-    return answers[`${prefix}_${parentQ.question_id}`] === triggeringAnswer
-  }
-
-  // Not a branch target — evaluate trigger directly
-  const trigger = q.triggers || ''
-  if (!trigger || /^intake_condition/i.test(trigger)) return true
-
-  // Extract component IDs from the trigger string (e.g. "DECK-01 present")
-  const cids = trigger.match(/[A-Z]+-\d+/g) || []
-  if (cids.length) {
-    return cids.some(cid => presentSet.has(cid) || sellerConfirmedPresent.has(cid))
-  }
-
-  return true
+// Is a component confirmed present?
+// - Seller-confirmed from photo review OR confident photo tag → true
+// - Explicit presence question → 'yes' (yes_no) or non-'no' (single_select)
+// - No presence question → true (always-present component)
+function isPresent(cid, presenceQMap, answers, photoPresentSet, confirmedPresentSet) {
+  if (confirmedPresentSet.has(cid) || photoPresentSet.has(cid)) return true
+  const pq = presenceQMap[cid]
+  if (!pq) return true  // no gate → always visible
+  const val = answers[`P_${pq.id}`]
+  if (!val) return false  // not yet answered → suppress children
+  if (pq.type === 'yes_no') return val === 'yes'
+  return val !== 'no'
 }
 
-// ── component ─────────────────────────────────────────────────────────────────
+// Parse "CID present OR CID2 present" trigger into a visibility decision
+function evalTrigger(trigger, presenceQMap, answers, photoPresentSet, confirmedPresentSet) {
+  if (!trigger || trigger === 'always_ask') return true
+  // Constraint parent-gate: "C-PAYUP = no"
+  if (/^[\w-]+\s*=\s*.+$/.test(trigger)) {
+    const [parentId, reqVal] = trigger.split(/\s*=\s*/)
+    return answers[`C_${parentId.trim()}`] === reqVal.trim()
+  }
+  // "CID present OR CID2 present"
+  const parts = trigger.split(/\s+OR\s+/)
+  return parts.some(part => {
+    const cid = part.replace(/\s+present$/i, '').trim()
+    if (!/^[A-Z]+-\d+$/.test(cid)) return true  // unknown format → show
+    return isPresent(cid, presenceQMap, answers, photoPresentSet, confirmedPresentSet)
+  })
+}
+
+// ── main component ────────────────────────────────────────────────────────────
 
 export default function QuestionnaireStep({ sessionId, photoData, onDone }) {
-  const [qBank, setQBank]           = useState(null)
-  const [answers, setAnswers]       = useState({})
-  const [loading, setLoading]       = useState(true)
+  const [qBank,      setQBank]      = useState(null)
+  const [answers,    setAnswers]    = useState({})
+  const [loading,    setLoading]    = useState(true)
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError]           = useState(null)
+  const [error,      setError]      = useState(null)
 
   const {
     photoTagsForCapture    = [],
@@ -96,9 +92,30 @@ export default function QuestionnaireStep({ sessionId, photoData, onDone }) {
       .finally(() => setLoading(false))
   }, [sessionId])
 
+  const photoPresentSet     = useMemo(() => buildPhotoPresent(photoTagsForCapture), [photoTagsForCapture])
+  const confirmedPresentSet = useMemo(() => buildSellerConfirmedPresent(sellerConfirmedTags), [sellerConfirmedTags])
+  const tagMap              = useMemo(() => buildTagMap(photoTagsForCapture), [photoTagsForCapture])
+
+  const presenceQMap = useMemo(
+    () => qBank ? buildPresenceQMap(qBank.presence_questions || []) : {},
+    [qBank]
+  )
+
   function answer(key, value) {
     setAnswers(prev => ({ ...prev, [key]: value }))
   }
+
+  function isVis(trigger) {
+    return evalTrigger(trigger, presenceQMap, answers, photoPresentSet, confirmedPresentSet)
+  }
+
+  function visionHint(cid) {
+    const t = tagMap[cid]
+    if (!t || (t.confidence ?? 0) < 0.5) return null
+    return `Vision: ${t.tag || t.condition || 'detected'} (${Math.round((t.confidence ?? 1) * 100)}% conf)`
+  }
+
+  // ── submit ──────────────────────────────────────────────────────────────────
 
   async function submit(e) {
     e.preventDefault()
@@ -107,69 +124,77 @@ export default function QuestionnaireStep({ sessionId, photoData, onDone }) {
     try {
       if (!qBank) throw new Error('Questions not loaded.')
 
-      const presentSet = buildPresentSet(photoTagsForCapture, absencePresenceAnswers)
-      const sellerConfirmedPresent = new Set(
-        sellerConfirmedTags.filter(t => t.present === true).map(t => t.component_id)
-      )
-
-      // Presence answers
+      // 1. Presence answers
       const presenceAnswers = []
-      for (const q of qBank.presence_questions) {
-        const val = answers[`P_${q.question_id}`]
-        if (val) {
-          const cids = Array.isArray(q.maps_to) ? q.maps_to : [q.maps_to].filter(Boolean)
-          for (const cid of cids) {
-            presenceAnswers.push({ question_id: q.question_id, component_id: cid, answer: val })
-          }
-        }
-      }
-
-      // Condition answers — only from currently visible questions (prune ghost answers)
-      const conditionQs = qBank.condition_questions.filter(q => q.question_id !== 'Q-INSP')
-      const visibleCQIds = new Set(
-        conditionQs.filter(q =>
-          ALWAYS_ASK.has(q.question_id) ||
-          isVisible(q, conditionQs, presentSet, answers, sellerConfirmedPresent, 'C')
-        ).map(q => q.question_id)
-      )
-
-      const conditionAnswers = []
-      for (const q of conditionQs) {
-        if (!visibleCQIds.has(q.question_id)) continue
-        const val = answers[`C_${q.question_id}`]
-        if (val) {
-          const cids = Array.isArray(q.maps_to) ? q.maps_to : [q.maps_to].filter(Boolean)
-          for (const cid of cids) {
-            conditionAnswers.push({ question_id: q.question_id, component_id: cid, answer: val })
-          }
-        }
-      }
-
-      // Constraints — only visible ones
-      const visibleConstraints = qBank.constraints_intake.filter(q =>
-        isVisible(q, qBank.constraints_intake, presentSet, answers, sellerConfirmedPresent, 'CI')
-      )
-      const sellerInputs = {}
-      for (const q of visibleConstraints) {
-        const val = answers[`CI_${q.question_id}`]
+      for (const q of qBank.presence_questions || []) {
+        const val = answers[`P_${q.id}`]
         if (!val) continue
-        if (q.question_id === 'C-PAYOFF') {
-          // Val here is the summed total written by PayoffSplitRow.
-          // Also persist the breakdown so results page can pre-fill each field.
-          const primary   = parseFloat(answers['CI_payoff_primary']   || '0') || 0
-          const secondary = parseFloat(answers['CI_payoff_secondary'] || '0') || 0
-          const other     = parseFloat(answers['CI_payoff_other']     || '0') || 0
-          sellerInputs.mortgage_payoff  = primary + secondary + other
-          sellerInputs.payoff_primary   = primary
-          sellerInputs.payoff_secondary = secondary
-          sellerInputs.payoff_other     = other
+        const cids = Array.isArray(q.maps_to) ? q.maps_to : [q.maps_to].filter(Boolean)
+        for (const cid of cids) {
+          presenceAnswers.push({ question_id: q.id, component_id: cid, answer: val })
         }
-        if (q.question_id === 'C-TIMELINE')    sellerInputs.timeline           = val
-        if (q.question_id === 'C-FUND-1')      sellerInputs.can_fund_upfront   = val === 'yes'
-        if (q.question_id === 'C-FUND-2')      sellerInputs.can_fund_financed  = val === 'yes'
-        if (q.question_id === 'C-CREDITS')     sellerInputs.seller_credits     = parseFloat(val) || 0
-        if (q.question_id === 'C-OTHER-COSTS') sellerInputs.other_seller_costs = parseFloat(val) || 0
       }
+
+      // 2. Condition answers (visible only)
+      const conditionAnswers = []
+      for (const q of qBank.condition_questions || []) {
+        if (!isVis(q.triggers)) continue
+        const val = answers[`Q_${q.id}`]
+        if (!val) continue
+        const cids = Array.isArray(q.maps_to) ? q.maps_to : [q.maps_to].filter(Boolean)
+        for (const cid of cids) {
+          conditionAnswers.push({ question_id: q.id, component_id: cid, answer: val })
+        }
+      }
+
+      // 3. Disclosure answers → treated as condition signals
+      for (const q of qBank.disclosure_questions || []) {
+        const val = answers[`D_${q.id}`]
+        if (!val || val === 'no') continue
+        const cids = q.maps_to === '_closing_hoa'
+          ? []
+          : (Array.isArray(q.maps_to) ? q.maps_to : [q.maps_to].filter(Boolean))
+        const desc = answers[`D_${q.id}_desc`] || ''
+        for (const cid of cids) {
+          conditionAnswers.push({ question_id: q.id, component_id: cid, answer: val, description: desc })
+        }
+      }
+
+      // 4. Cosmetic upgrade answers → treated as condition signals with upgrade type
+      for (const q of qBank.cosmetic_upgrade_questions || []) {
+        if (!isVis(q.triggers)) continue
+        const val = answers[`U_${q.id}`]
+        if (!val) continue
+        const cids = Array.isArray(q.maps_to) ? q.maps_to : [q.maps_to].filter(Boolean)
+        for (const cid of cids) {
+          conditionAnswers.push({ question_id: q.id, component_id: cid, answer: val, work_type: 'upgrade' })
+        }
+      }
+
+      // 5. Constraints → seller_inputs
+      const sellerInputs = {}
+      for (const q of qBank.constraints_questions || []) {
+        if (!isVis(q.triggers)) continue
+        const val = answers[`C_${q.id}`]
+        if (val == null || val === '') continue
+        const key = q.maps_to
+        if (!key || key === '_closing_hoa') continue
+        if (q.type === 'currency') {
+          sellerInputs[key] = parseFloat(val) || 0
+        } else if (q.type === 'yes_no') {
+          sellerInputs[key] = val === 'yes'
+        } else {
+          sellerInputs[key] = val
+        }
+      }
+      // Sum payoff components
+      sellerInputs.mortgage_payoff = (sellerInputs.payoff_primary || 0)
+                                   + (sellerInputs.payoff_secondary || 0)
+                                   + (sellerInputs.payoff_liens || 0)
+
+      // HOA from disclosure D-HOA
+      const hoaAns = answers['D_D-HOA']
+      if (hoaAns === 'yes') sellerInputs._closing_hoa = true
 
       await submitCapture(sessionId, {
         photoTagsForCapture,
@@ -188,77 +213,102 @@ export default function QuestionnaireStep({ sessionId, photoData, onDone }) {
     }
   }
 
+  // ── render ──────────────────────────────────────────────────────────────────
+
   if (loading) return <p>Loading questions…</p>
   if (!qBank)  return <p style={{ color: 'red' }}>Failed to load questionnaire. {error}</p>
 
-  const tagMap     = buildTagMap(photoTagsForCapture)
-  const presentSet = buildPresentSet(photoTagsForCapture, absencePresenceAnswers)
-  const sellerConfirmedPresent = new Set(
-    sellerConfirmedTags.filter(t => t.present === true).map(t => t.component_id)
-  )
-
-  function visionHint(cid) {
-    const t = tagMap[cid]
-    if (!t || t.confidence < 0.5) return null
-    return `Vision: ${t.tag || t.condition} (${(t.confidence * 100).toFixed(0)}% conf)`
-  }
-
-  // Condition questions: exclude Q-INSP (handled at intake), apply branching
-  const conditionQs = qBank.condition_questions.filter(q => q.question_id !== 'Q-INSP')
-  const visibleConditionQs = conditionQs.filter(q =>
-    ALWAYS_ASK.has(q.question_id) ||
-    isVisible(q, conditionQs, presentSet, answers, sellerConfirmedPresent, 'C')
-  )
-
-  // Constraints: apply branching (C-FUND-2 gated on C-FUND-1=no)
-  const visibleConstraints = qBank.constraints_intake.filter(q =>
-    isVisible(q, qBank.constraints_intake, presentSet, answers, sellerConfirmedPresent, 'CI')
-  )
+  const visibleConditionQs = (qBank.condition_questions || []).filter(q => isVis(q.triggers))
+  const visibleUpgradeQs   = (qBank.cosmetic_upgrade_questions || []).filter(q => isVis(q.triggers))
+  const visibleConstraints = (qBank.constraints_questions || []).filter(q => isVis(q.triggers))
 
   return (
     <form onSubmit={submit}>
       <h2 style={{ fontSize: 16, marginBottom: 8 }}>Questionnaire</h2>
       <p style={{ fontSize: 13, color: '#555', marginBottom: 20 }}>
-        Questions narrow based on your answers. Vision's draft is shown as a hint only — your answers override it.
+        Questions narrow as you answer. Your answers override any vision draft shown as a hint.
       </p>
 
-      {/* Presence */}
+      {/* ── Step 1: About your home ── */}
       <section style={sectionStyle}>
-        <h3 style={h3}>What does your home have?</h3>
-        {qBank.presence_questions.map(q => {
+        <h3 style={h3}>About your home</h3>
+        <p style={sectionNote}>
+          Answer to reveal follow-up questions. If you don't have something, it won't appear.
+        </p>
+        {(qBank.presence_questions || []).map(q => {
           const cid  = Array.isArray(q.maps_to) ? q.maps_to[0] : q.maps_to
-          const hint = cid ? visionHint(cid) : null
           return (
-            <QuestionRow key={q.question_id} q={q} prefix="P"
-              answers={answers} onAnswer={answer} hint={hint} />
+            <QuestionRow key={q.id} q={q} prefix="P"
+              answers={answers} onAnswer={answer}
+              hint={cid ? visionHint(cid) : null} />
           )
         })}
       </section>
 
-      {/* Condition — branching */}
+      {/* ── Step 1b: Condition ── */}
       {visibleConditionQs.length > 0 && (
         <section style={sectionStyle}>
           <h3 style={h3}>Condition — what you know or can check</h3>
+          <p style={sectionNote}>
+            "Unsure / can't access" means we'll flag it as something to get looked at — no cost guessed.
+          </p>
           {visibleConditionQs.map(q => {
-            const cid  = Array.isArray(q.maps_to) ? q.maps_to[0] : q.maps_to
-            const hint = cid ? visionHint(cid) : null
+            const cid = Array.isArray(q.maps_to) ? q.maps_to[0] : q.maps_to
             return (
-              <QuestionRow key={q.question_id} q={q} prefix="C"
-                answers={answers} onAnswer={answer} hint={hint} />
+              <QuestionRow key={q.id} q={q} prefix="Q"
+                answers={answers} onAnswer={answer}
+                hint={cid ? visionHint(cid) : null} />
             )
           })}
         </section>
       )}
 
-      {/* Constraints — branching */}
-      <section style={sectionStyle}>
-        <h3 style={h3}>Your situation</h3>
-        {visibleConstraints.map(q =>
-          q.question_id === 'C-PAYOFF'
-            ? <PayoffSplitRow key={q.question_id} answers={answers} onAnswer={answer} />
-            : <QuestionRow key={q.question_id} q={q} prefix="CI" answers={answers} onAnswer={answer} />
-        )}
-      </section>
+      {/* ── Optional upgrades ── */}
+      {visibleUpgradeQs.length > 0 && (
+        <section style={sectionStyle}>
+          <h3 style={h3}>Optional — quick wins that often pay for themselves</h3>
+          <p style={sectionNote}>
+            These are cosmetic refreshes, not defects. Small spend, often strong return at sale.
+          </p>
+          {visibleUpgradeQs.map(q => {
+            const cid = Array.isArray(q.maps_to) ? q.maps_to[0] : q.maps_to
+            return (
+              <QuestionRow key={q.id} q={q} prefix="U"
+                answers={answers} onAnswer={answer}
+                hint={cid ? visionHint(cid) : null} />
+            )
+          })}
+        </section>
+      )}
+
+      {/* ── Step 2: Disclosures ── */}
+      {(qBank.disclosure_questions || []).length > 0 && (
+        <section style={sectionStyle}>
+          <h3 style={h3}>Anything you already know about</h3>
+          <p style={sectionNote}>
+            SC requires disclosure of known material defects. "Yes" opens a description field.
+          </p>
+          {(qBank.disclosure_questions || []).map(q => (
+            <DisclosureRow key={q.id} q={q} answers={answers} onAnswer={answer} />
+          ))}
+        </section>
+      )}
+
+      {/* ── Step 3: Constraints ── */}
+      {visibleConstraints.length > 0 && (
+        <section style={sectionStyle}>
+          <h3 style={h3}>Your situation</h3>
+          <p style={sectionNote}>
+            Helps show what you'd actually walk away with. Stays private.
+          </p>
+          <PayoffBlock answers={answers} onAnswer={answer} />
+          {visibleConstraints.filter(q =>
+            !['C-PAYOFF-PRIMARY', 'C-PAYOFF-SECOND', 'C-PAYOFF-LIENS'].includes(q.id)
+          ).map(q => (
+            <QuestionRow key={q.id} q={q} prefix="C" answers={answers} onAnswer={answer} />
+          ))}
+        </section>
+      )}
 
       {error && <p style={{ color: 'red', marginBottom: 8 }}>{error}</p>}
       <button style={btnStyle} type="submit" disabled={submitting}>
@@ -268,19 +318,12 @@ export default function QuestionnaireStep({ sessionId, photoData, onDone }) {
   )
 }
 
-function PayoffSplitRow({ answers, onAnswer }) {
-  function update(key, raw) {
-    onAnswer(key, raw)
-    // Recompute total and write to CI_C-PAYOFF so submit handler picks it up
-    const p = parseFloat(key === 'CI_payoff_primary'   ? raw : (answers['CI_payoff_primary']   || '0')) || 0
-    const s = parseFloat(key === 'CI_payoff_secondary' ? raw : (answers['CI_payoff_secondary'] || '0')) || 0
-    const o = parseFloat(key === 'CI_payoff_other'     ? raw : (answers['CI_payoff_other']     || '0')) || 0
-    onAnswer('CI_C-PAYOFF', String(p + s + o))
-  }
-
-  const total = (parseFloat(answers['CI_payoff_primary'] || '0') || 0)
-              + (parseFloat(answers['CI_payoff_secondary'] || '0') || 0)
-              + (parseFloat(answers['CI_payoff_other'] || '0') || 0)
+// ── PayoffBlock: three-line payoff split ──────────────────────────────────────
+function PayoffBlock({ answers, onAnswer }) {
+  const primary   = parseFloat(answers['C_C-PAYOFF-PRIMARY'] || '0') || 0
+  const secondary = parseFloat(answers['C_C-PAYOFF-SECOND']  || '0') || 0
+  const liens     = parseFloat(answers['C_C-PAYOFF-LIENS']   || '0') || 0
+  const total     = primary + secondary + liens
 
   return (
     <div style={{ marginBottom: 20 }}>
@@ -292,16 +335,15 @@ function PayoffSplitRow({ answers, onAnswer }) {
         common reason net proceeds come out wrong.
       </p>
       {[
-        { label: 'Primary mortgage balance',        key: 'CI_payoff_primary' },
-        { label: 'Second mortgage or HELOC',        key: 'CI_payoff_secondary' },
-        { label: 'Liens, unpaid taxes, or other',  key: 'CI_payoff_other' },
+        { label: 'Primary mortgage balance',       key: 'C_C-PAYOFF-PRIMARY' },
+        { label: 'Second mortgage or HELOC',       key: 'C_C-PAYOFF-SECOND'  },
+        { label: 'Liens, unpaid taxes, or other', key: 'C_C-PAYOFF-LIENS'   },
       ].map(({ label, key }) => (
         <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <span style={{ fontSize: 13, width: 230 }}>{label}</span>
-          <input type="number" min={0} step={1000}
-            placeholder="$0"
+          <input type="number" min={0} step={1000} placeholder="$0"
             value={answers[key] || ''}
-            onChange={e => update(key, e.target.value)}
+            onChange={e => onAnswer(key, e.target.value)}
             style={{ fontSize: 13, padding: '4px 6px', width: 130 }} />
         </div>
       ))}
@@ -314,8 +356,42 @@ function PayoffSplitRow({ answers, onAnswer }) {
   )
 }
 
+// ── DisclosureRow: yes/no + optional text description ─────────────────────────
+function DisclosureRow({ q, answers, onAnswer }) {
+  const key  = `D_${q.id}`
+  const desc = `D_${q.id}_desc`
+  const val  = answers[key] ?? ''
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label style={{ fontSize: 13, fontWeight: 500, display: 'block', marginBottom: 4 }}>
+        {q.prompt}
+      </label>
+      <div>
+        {['yes', 'no'].map(opt => (
+          <label key={opt} style={{ marginRight: 16, fontSize: 13 }}>
+            <input type="radio" name={key} value={opt}
+              checked={val === opt} onChange={() => onAnswer(key, opt)} />
+            {' '}{opt}
+          </label>
+        ))}
+      </div>
+      {val === 'yes' && (
+        <textarea
+          placeholder="Brief description (optional but helpful)"
+          value={answers[desc] || ''}
+          onChange={e => onAnswer(desc, e.target.value)}
+          style={{ marginTop: 6, fontSize: 12, width: '100%', maxWidth: 440,
+                   padding: '6px 8px', minHeight: 60, boxSizing: 'border-box' }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── QuestionRow: single_select / yes_no / currency ───────────────────────────
 function QuestionRow({ q, prefix, answers, onAnswer, hint }) {
-  const key = `${prefix}_${q.question_id}`
+  const key = `${prefix}_${q.id}`
   const val = answers[key] ?? ''
 
   return (
@@ -328,7 +404,8 @@ function QuestionRow({ q, prefix, answers, onAnswer, hint }) {
           {hint}
         </div>
       )}
-      {q.answer_type === 'yes_no' && (
+
+      {(q.type === 'yes_no') && (
         <div>
           {['yes', 'no'].map(opt => (
             <label key={opt} style={{ marginRight: 16, fontSize: 13 }}>
@@ -339,21 +416,28 @@ function QuestionRow({ q, prefix, answers, onAnswer, hint }) {
           ))}
         </div>
       )}
-      {q.answer_type === 'single_select' && (
+
+      {(q.type === 'single_select') && (
         <select style={selectStyle} value={val} onChange={e => onAnswer(key, e.target.value)}>
           <option value="">— select —</option>
-          {(q.options || []).map(o => <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>)}
+          {(q.options || []).map(o => (
+            <option key={o} value={o}>{o}</option>
+          ))}
         </select>
       )}
-      {q.answer_type === 'range' && (
-        <input type="number" style={selectStyle} placeholder="$0"
+
+      {(q.type === 'currency') && (
+        <input type="number" min={0} step={100} placeholder="$0"
+          style={{ fontSize: 13, padding: '4px 6px', width: 160 }}
           value={val} onChange={e => onAnswer(key, e.target.value)} />
       )}
     </div>
   )
 }
 
-const btnStyle    = { padding: '8px 20px', fontSize: 14, cursor: 'pointer' }
+// ── styles ────────────────────────────────────────────────────────────────────
 const sectionStyle = { marginBottom: 24, paddingBottom: 16, borderBottom: '1px solid #eee' }
-const h3          = { fontSize: 14, marginTop: 0, marginBottom: 14 }
-const selectStyle = { fontSize: 13, padding: '4px 6px' }
+const h3           = { fontSize: 14, marginTop: 0, marginBottom: 6 }
+const sectionNote  = { fontSize: 12, color: '#666', marginTop: 0, marginBottom: 14 }
+const selectStyle  = { fontSize: 13, padding: '4px 6px' }
+const btnStyle     = { padding: '8px 20px', fontSize: 14, cursor: 'pointer' }
