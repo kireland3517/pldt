@@ -96,6 +96,7 @@ class CaptureSubmission(BaseModel):
     presence_answers: List[PresenceAnswer] = []
     condition_answers: List[ConditionAnswer] = []
     seller_confirmed_tags: List[SellerConfirmedTag] = []   # Pass 3 — always wins
+    seller_inputs: Optional[dict] = {}   # mortgage_payoff, timeline, etc.
 
 
 class FloorItem(BaseModel):

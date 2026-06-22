@@ -57,10 +57,17 @@ def submit_capture(session_id: str, body: CaptureSubmission):
     cond_list = build_condition_list(instance, ref, has_inspection=has_insp)
     summary   = condition_summary(cond_list)
 
-    # Persist: instance_json + raw submission, advance status
+    # Persist: instance_json + raw submission, advance status.
+    # Merge submitted seller_inputs (mortgage_payoff, timeline, etc.) into the
+    # top-level seller_inputs column so compute.py can read them directly.
+    existing_row = db.table(TABLE).select("seller_inputs")         .eq("id", session_id).maybe_single().execute()
+    existing_si = (existing_row.data or {}).get("seller_inputs") or {}
+    merged_si   = {**existing_si, **(body.seller_inputs or {})}
+
     db.table(TABLE).update({
         "instance_json":      instance,
         "capture_submission": body.model_dump(),
+        "seller_inputs":      merged_si,
         "status":             "capture",
         "compute_result":     None,   # invalidate any cached compute
     }).eq("id", session_id).execute()

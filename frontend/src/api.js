@@ -50,6 +50,7 @@ export async function submitCapture(sessionId, payload) {
       ...(payload.presence_answers || []),
     ],
     condition_answers:    payload.condition_answers || [],
+    seller_inputs:        payload.seller_inputs || {},
   }
   const res = await fetch(`${BASE}/session/${sessionId}/capture`, {
     method: 'POST',
