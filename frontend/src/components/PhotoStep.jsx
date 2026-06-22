@@ -45,6 +45,47 @@ const ALWAYS_COMMON = new Set([
   'DECK-01','PRCH-01','GAR-01','GUT-01','VENT-01',
 ])
 
+// Human-readable names for the absence panel (components not detected by vision)
+const COMPONENT_NAMES = {
+  'ROOF-01': 'Roof (asphalt shingle)',
+  'FND-01': 'Foundation / crawlspace / basement',
+  'SID-01': 'Siding (vinyl)',
+  'GUT-01': 'Gutters / downspouts / drainage',
+  'WIN-01': 'Windows (general)',
+  'SCR-01': 'Window screens',
+  'DECK-01': 'Deck',
+  'PRCH-01': 'Front porch / steps / railings',
+  'DRV-01': 'Driveway',
+  'XDR-01': 'Exterior doors / entry',
+  'XLT-01': 'Exterior lighting',
+  'LAND-01': 'Landscaping / yard',
+  'PWASH-01': 'Pressure wash (service)',
+  'ACCT-01': 'Decorative accents / shutters',
+  'MBOX-01': 'Mailbox',
+  'BELL-01': 'Doorbell',
+  'OUT-01': 'Exterior outlets / GFCI',
+  'GAR-01': 'Garage door / opener',
+  'HVAC-01': 'HVAC system (furnace + AC)',
+  'WH-HTR-01': 'Water heater',
+  'ELEC-01': 'Electrical panel / wiring',
+  'PLMB-01': 'Plumbing supply / drain',
+  'DET-01': 'Smoke / CO detectors',
+  'DUCT-01': 'Duct system (clean / inspect)',
+  'REM-01': 'Smoke / odor remediation',
+  'VENT-01': 'Bathroom / exhaust fans',
+  'IHW-01': 'Interior hardware (handles / knobs)',
+  'FLR-01': 'Flooring (carpet / LVP / hardwood)',
+  'IDR-01': 'Interior doors',
+  'ILT-01': 'Interior lighting / fixtures',
+  'PNT-01': 'Interior paint',
+  'KIT-01': 'Kitchen (cabinets / counters)',
+  'VAN-01': 'Vanity / bathroom fixtures',
+  'BTHP-01': 'Primary bathroom',
+  'BTHS-01': 'Secondary bathroom(s)',
+  'WSHR-01': 'Washer / dryer hookups',
+  'ATTIC-01': 'Attic access / insulation',
+}
+
 // ── merge helpers ────────────────────────────────────────────────────────────
 
 // Merge one tag into the running component map.
@@ -459,7 +500,7 @@ export default function PhotoStep({ sessionId, onDone }) {
               </p>
               {unconfirmedCids.map(cid => (
                 <div key={cid} style={{ marginBottom: 6, fontSize: 13 }}>
-                  <code style={{ fontSize: 11 }}>{cid}</code>
+                  <span style={{ fontSize: 13 }}>{COMPONENT_NAMES[cid] || cid}</span>
                   {' — '}
                   {['yes','no','unsure'].map(val => (
                     <label key={val} style={{ marginRight: 12 }}>
