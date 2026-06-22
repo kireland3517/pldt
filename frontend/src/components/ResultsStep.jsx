@@ -97,6 +97,11 @@ function buildRepairPlan(repairTable, floorResult, effectiveIds) {
   const floorItems = [], discretionary = [], upgradeItems = [], notIncluded = []
 
   for (const row of repairTable) {
+    // Mirror backend gate: severity "none" = good condition, not a repair candidate.
+    // This filters stored results that predate the backend fix.
+    if ((row.severity_detected == null || row.severity_detected === 'none')
+        && !row.in_floor && row.better_value !== 'upgrade') continue
+
     const cid       = row.component_id
     const inFloor   = floorIds.has(cid)
     const isUpgrade = row.better_value === 'upgrade'
