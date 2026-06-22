@@ -85,6 +85,22 @@ def build_plans(
         # Summarize which items are included in this plan
         included = _items_for_level(enriched_rows, floor_result, level)
 
+        # Repair spend: pull from net_proceeds line_items for accuracy
+        repair_spend = next(
+            (li["amount"] for li in np_result.get("line_items", [])
+             if li["label"] == "Pre-listing repairs (plan)"),
+            0.0,
+        )
+
+        # Plan-level ROI%: (value_lift - repair_spend) / repair_spend * 100
+        # Positive = seller gains more than they spend; capped at ceiling.
+        if repair_spend > 0:
+            plan_roi_pct = round(
+                (value_lift_capped - repair_spend) / repair_spend * 100, 1
+            )
+        else:
+            plan_roi_pct = None  # nothing spent; ROI undefined
+
         plans[level] = {
             "plan_level":               level,
             "adjusted_sale_price":      round(adjusted_price, 2),
@@ -92,16 +108,13 @@ def build_plans(
             "improved_listing_ceiling": round(ceiling, 2),
             "value_lift_capped":        value_lift_capped,
             "value_lift_cap_binding":   cap_was_binding,
-            "dom":                 dom_result,
-            "carrying":            carrying,
-            "net_proceeds":        np_result,
-            "included_items":      included,
-            "item_count":          len(included),
-            "total_repair_cost_mid": np_result.get("net_proceeds") and (
-                np_result["gross_sale_price"] - np_result["net_proceeds"]
-                - np_result["total_deductions"]
-                + np_result.get("gross_sale_price", 0)
-            ),  # recalculated below for clarity
+            "total_repair_cost_mid":    round(repair_spend, 2),
+            "plan_roi_pct":             plan_roi_pct,
+            "dom":                      dom_result,
+            "carrying":                 carrying,
+            "net_proceeds":             np_result,
+            "included_items":           included,
+            "item_count":               len(included),
         }
 
     # Add a simple scorecard comparing plans

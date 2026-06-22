@@ -365,6 +365,12 @@ export default function ResultsStep({ sessionId }) {
                     )}
                   </div>
                 )}
+                {p.plan_roi_pct != null && (
+                  <div style={{ fontSize: 11, color: p.plan_roi_pct >= 0 ? '#1a7f37' : '#c00', marginTop: 2 }}>
+                    Plan ROI: {p.plan_roi_pct > 0 ? '+' : ''}{p.plan_roi_pct}%
+                    <span style={{ color: '#888', fontWeight: 400 }}> (lift ÷ spend)</span>
+                  </div>
+                )}
                 <div style={{ fontSize: 11, color: '#777', marginTop: 4 }}>
                   {p.dom?.estimated_dom} days est. · {p.item_count} items
                 </div>
