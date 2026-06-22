@@ -59,22 +59,28 @@ function skipReason(item, planLevel) {
 function computeLiveNet(baseNet, repairTable, basePlanIds, effectiveIds, customCosts) {
   let delta = 0
   for (const row of repairTable) {
-    if (row.in_floor) continue  // floor always required, never toggled
     const cid = row.component_id
     const defaultMid = itemCostMid(row)
-    const usedCost = customCosts[cid] != null ? customCosts[cid] : defaultMid
     const recoup = (row.recoup_pct || 0) / 100
-
     const wasIn = basePlanIds.has(cid)
     const isIn  = effectiveIds.has(cid)
+
+    if (row.in_floor) {
+      // Floor items can't be toggled, but cost edits still flow to net
+      if (wasIn && isIn && customCosts[cid] != null) {
+        delta += (defaultMid - customCosts[cid]) * (1 - recoup)
+      }
+      continue
+    }
+
+    const usedCost = customCosts[cid] != null ? customCosts[cid] : defaultMid
 
     if (!wasIn && isIn) {
       delta -= usedCost * (1 - recoup)
     } else if (wasIn && !isIn) {
       delta += defaultMid * (1 - recoup)
     } else if (wasIn && isIn && customCosts[cid] != null) {
-      // same item, cost changed
-      delta += defaultMid * (1 - recoup) - usedCost * (1 - recoup)
+      delta += (defaultMid - customCosts[cid]) * (1 - recoup)
     }
   }
   return (baseNet || 0) + delta
@@ -625,7 +631,7 @@ export default function ResultsStep({ sessionId }) {
                     <td style={{ ...td, fontWeight: 500 }}>{item.display_name}</td>
                     <td style={td}><CostCell item={item} customCosts={customCosts}
                       editingCost={editingCost} setEditingCost={setEditingCost}
-                      onCostSave={(cid, v) => setCustomCosts(p => ({ ...p, [cid]: v }))} /></td>
+                      onCostSave={handleCostSave} /></td>
                     <td style={td}>{item.recoup_pct != null ? `${item.recoup_pct}%` : '—'}</td>
                   </tr>
                 ))}

@@ -59,6 +59,14 @@ def build_repair_rows(condition_list: List[dict]) -> List[dict]:
             })
             continue
 
+        # Good-condition items are not repair candidates.
+        # severity "none" = no defect detected. Exclude unless the item is
+        # floor-eligible (a floor trigger overrides condition) or an upgrade.
+        if (rec.get("severity_detected") in (None, "none")
+                and not rec.get("defect_qualifies_floor")
+                and not rec.get("upgrade_candidate")):
+            continue
+
         rl = rec.get("repair_low")   # may be None for library gaps
         rh = rec.get("repair_high")
         pl = rec.get("replace_low")

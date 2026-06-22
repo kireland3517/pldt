@@ -97,6 +97,13 @@ def _refined_call(row: dict, recoup_pct: float, source: str, is_defect: bool) ->
         "beyond typical service life",
     )
     cond_lower = (row.get("condition_detected") or "").lower()
+
+    # Good-condition gate (defense in depth — repair_replace.py should have
+    # already excluded these, but guard here too).
+    _GOOD_SIGNALS = ("good condition",)
+    if any(sig in cond_lower for sig in _GOOD_SIGNALS) and not in_floor:
+        return "leave"
+
     if any(sig in cond_lower for sig in _TERMINAL_SIGNALS):
         return "replace"
 
