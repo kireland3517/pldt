@@ -148,13 +148,13 @@ def _adjusted_sale_price(
 
     for row in enriched_rows:
         bv = row.get("better_value")
-        if bv not in ("repair", "replace"):
+        if bv not in ("repair", "replace", "upgrade"):
             continue
 
         recoup_pct = row.get("recoup_pct", 0) / 100.0
         is_floor   = row.get("defect_qualifies_floor", False)
         mid = (
-            row.get("cost_mid_repair") if bv == "repair"
+            row.get("cost_mid_repair") if bv in ("repair", "upgrade")
             else row.get("cost_mid_replace")
         )
         if not mid:
@@ -165,6 +165,9 @@ def _adjusted_sale_price(
             include = True
         elif level == "recommended":
             if is_floor or row.get("recoup_pct", 0) >= RECOMMENDED_RECOUP_THRESHOLD:
+                include = True
+            # Upgrade items with high recoup also appear in recommended
+            if bv == "upgrade" and row.get("recoup_pct", 0) >= RECOMMENDED_RECOUP_THRESHOLD:
                 include = True
         elif level == "do_everything":
             include = True
@@ -196,7 +199,7 @@ def _items_for_level(enriched_rows: list, floor_result: dict, level: str) -> lis
         if level == "leaner" and in_floor:
             included.append(cid)
         elif level == "recommended" and (in_floor or recoup >= RECOMMENDED_RECOUP_THRESHOLD):
-            if bv in ("repair", "replace", "credit"):
+            if bv in ("repair", "replace", "credit", "upgrade"):
                 included.append(cid)
         elif level == "do_everything":
             included.append(cid)

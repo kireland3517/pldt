@@ -85,6 +85,7 @@ def build_condition_list(
             "shared_structure":     item.get("shared_structure"),
             # Age / replacement signal
             "recent_replacement":   item.get("recent_replacement", False),
+            "upgrade_candidate":    item.get("upgrade_candidate", False),
             # Flags
             "assumed_present":      assumed,
             "has_inspection":       has_inspection,

@@ -27,6 +27,38 @@ def build_repair_rows(condition_list: List[dict]) -> List[dict]:
     rows: List[dict] = []
 
     for rec in condition_list:
+        # Upgrade-candidate items: cosmetic refresh, never Floor, own recoup%
+        if rec.get("upgrade_candidate"):
+            rl = rec.get("repair_low")
+            rh = rec.get("repair_high")
+            rows.append({
+                "component_id":           rec["component_id"],
+                "display_name":           rec["display_name"],
+                "zone":                   rec["zone"],
+                "condition_detected":     rec.get("condition_detected") or "dated / upgrade opportunity",
+                "severity_detected":      "low",
+                "defect_qualifies_floor": False,
+                "shared_structure":       None,
+                "repair_low":             rl,
+                "repair_high":            rh,
+                "replace_low":            None,
+                "replace_high":           None,
+                "cost_mid_repair":        _mid(rl, rh),
+                "cost_mid_replace":       None,
+                "repairable":             True,
+                "creditable":             False,
+                "better_value":           "upgrade",
+                "in_floor":               False,
+                "recent_replacement":     False,
+                "upgrade_candidate":      True,
+                "recoup_pct":             rec.get("recoup_pct", 0),
+                "confidence":             rec.get("confidence"),
+                "source":                 rec.get("source"),
+                "notes":                  rec.get("notes"),
+                "thin_data":              (rl is None),
+            })
+            continue
+
         rl = rec.get("repair_low")   # may be None for library gaps
         rh = rec.get("repair_high")
         pl = rec.get("replace_low")
@@ -64,6 +96,8 @@ def build_repair_rows(condition_list: List[dict]) -> List[dict]:
             "in_floor":      rec["defect_qualifies_floor"],
             # Positive signals
             "recent_replacement": rec.get("recent_replacement", False),
+            "upgrade_candidate":  rec.get("upgrade_candidate", False),
+            "recoup_pct":    rec.get("recoup_pct", 0),
             # Confidence / source
             "confidence":    rec["confidence"],
             "source":        rec["source"],

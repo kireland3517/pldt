@@ -11,7 +11,7 @@ class LibraryComponent(BaseModel):
     display_name: str
     zone: str
     typical_in_home: Literal["always", "common", "sometimes"]
-    work_type_default: Literal["major", "minor", "clean"]
+    work_type_default: Literal["major", "minor", "clean", "upgrade"]
     repair_low: float
     repair_high: float
     replace_low: float
@@ -62,6 +62,8 @@ class ConditionAnswer(BaseModel):
     answer: str
     maps_to_condition: Optional[str] = None
     maps_to_severity: Optional[Literal["low", "medium", "high"]] = None
+    work_type: Optional[str] = None   # 'upgrade' for cosmetic refresh answers
+    description: Optional[str] = None  # disclosure free-text
 
 
 class PhotoTag(BaseModel):

@@ -14,10 +14,11 @@ const PLAN_DESCRIPTIONS = {
 }
 
 const PATH_LABELS = {
-  repair:  'Repair',
-  replace: 'Replace',
-  credit:  'Buyer credit',
-  leave:   'Leave as-is',
+  repair:   'Repair',
+  replace:  'Replace',
+  credit:   'Buyer credit',
+  leave:    'Leave as-is',
+  upgrade:  'Refresh',
 }
 
 function fmt(n) {
@@ -87,14 +88,18 @@ function buildRepairPlan(repairTable, floorResult, effectiveIds) {
   const floorIds  = new Set((floorResult?.items || []).map(i => i.component_id))
   const floorMeta = Object.fromEntries((floorResult?.items || []).map(i => [i.component_id, i]))
 
-  const floorItems = [], discretionary = [], notIncluded = []
+  const floorItems = [], discretionary = [], upgradeItems = [], notIncluded = []
 
   for (const row of repairTable) {
-    const cid     = row.component_id
-    const inFloor = floorIds.has(cid)
+    const cid       = row.component_id
+    const inFloor   = floorIds.has(cid)
+    const isUpgrade = row.better_value === 'upgrade'
 
-    if (inFloor) {
+    if (inFloor && !isUpgrade) {
       floorItems.push({ ...row, floor_reason: floorMeta[cid]?.reason || 'required' })
+    } else if (isUpgrade) {
+      // Upgrade rows: always in their own section, checkable
+      upgradeItems.push(row)
     } else if (effectiveIds.has(cid)) {
       discretionary.push(row)
     } else if (row.better_value !== 'leave') {
@@ -102,7 +107,7 @@ function buildRepairPlan(repairTable, floorResult, effectiveIds) {
     }
   }
 
-  return { floorItems, discretionary, notIncluded }
+  return { floorItems, discretionary, upgradeItems, notIncluded }
 }
 
 // ── Inline cost cell ─────────────────────────────────────────────────────────
@@ -264,7 +269,7 @@ export default function ResultsStep({ sessionId }) {
   const netDelta = liveNet - baseNet
   const hasCustomCosts = Object.keys(customCosts).length > 0
 
-  const { floorItems, discretionary, notIncluded } =
+  const { floorItems, discretionary, upgradeItems, notIncluded } =
     buildRepairPlan(repair, floor, effectiveIds)
 
   return (
@@ -597,6 +602,36 @@ export default function ResultsStep({ sessionId }) {
               </tbody>
             </table>
           </details>
+        )}
+
+        {/* ── Upgrade / quick refresh items ── */}
+        {upgradeItems.length > 0 && (
+          <div style={{ marginBottom: 24 }}>
+            <div style={sectionHeadStyle('#065f46', '#d1fae5', '✦')}>
+              Quick refresh — optional, often strong return ({upgradeItems.length})
+            </div>
+            <p style={{ fontSize: 12, color: '#555', marginTop: 0, marginBottom: 8 }}>
+              Cosmetic updates, not defects. Low cost, high buyer appeal.
+            </p>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={th}>Item</th>
+                <th style={th}>Est. cost</th>
+                <th style={th}>Recoup %</th>
+              </tr></thead>
+              <tbody>
+                {upgradeItems.map((item, i) => (
+                  <tr key={i}>
+                    <td style={{ ...td, fontWeight: 500 }}>{item.display_name}</td>
+                    <td style={td}><CostCell item={item} customCosts={customCosts}
+                      editingCost={editingCost} setEditingCost={setEditingCost}
+                      onCostSave={(cid, v) => setCustomCosts(p => ({ ...p, [cid]: v }))} /></td>
+                    <td style={td}>{item.recoup_pct != null ? `${item.recoup_pct}%` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         {floorItems.length === 0 && discretionary.length === 0 && notIncluded.length === 0 && (

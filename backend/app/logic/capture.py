@@ -346,6 +346,15 @@ def apply_condition_answers(
             if not item["present"]:
                 continue
 
+            # Upgrade-candidate answers: mark as upgrade_candidate and skip
+            # defect condition logic entirely — these are cosmetic refresh items,
+            # not defects.
+            if getattr(ans, 'work_type', None) == 'upgrade':
+                item["upgrade_candidate"] = True
+                item["source"] = item["source"] or "questionnaire"
+                item["confidence"] = max(item["confidence"] or 0, CONF_Q_DIRECT)
+                continue
+
             # Use the normalized condition from the answer if provided;
             # otherwise derive it from the raw answer value.
             cond = ans.maps_to_condition or _answer_to_condition(ans.question_id, ans.answer)

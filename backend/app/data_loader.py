@@ -85,6 +85,7 @@ def blank_instance(library: Dict[str, dict]) -> Dict[str, dict]:
             "notes": None,
             "shared_structure": None,   # set when two components share one structure
             "recent_replacement": None, # True if seller confirms replacement within ~5 years
+            "upgrade_candidate":  False, # True if seller flagged as cosmetic upgrade opportunity
         }
         for cid in library
     }
