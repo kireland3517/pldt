@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import AddressStep from './components/AddressStep'
 import PhotoStep from './components/PhotoStep'
 import QuestionnaireStep from './components/QuestionnaireStep'
@@ -15,7 +15,37 @@ export default function App() {
     absencePresenceAnswers: [],
   })
 
-  function next(s) { setStep(STEPS[STEPS.indexOf(s) + 1]) }
+  // On load: resume from URL ?session=<id> so page refresh doesn't lose the session
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const sid = params.get('session')
+    const s   = params.get('step')
+    if (sid) {
+      setSessionId(sid)
+      setStep(STEPS.includes(s) ? s : 'photos')
+    }
+  }, [])
+
+  function next(current) {
+    const nextStep = STEPS[STEPS.indexOf(current) + 1]
+    setStep(nextStep)
+    // Keep URL in sync so the user can bookmark or refresh mid-flow
+    if (sessionId) {
+      const url = new URL(window.location)
+      url.searchParams.set('step', nextStep)
+      window.history.replaceState({}, '', url)
+    }
+  }
+
+  function handleSessionCreated(sid) {
+    setSessionId(sid)
+    // Write session to URL immediately so refresh resumes here
+    const url = new URL(window.location)
+    url.searchParams.set('session', sid)
+    url.searchParams.set('step', 'photos')
+    window.history.replaceState({}, '', url)
+    next('address')
+  }
 
   return (
     <div style={{ maxWidth: 760, margin: '0 auto', padding: '24px 16px', fontFamily: 'system-ui, sans-serif' }}>
@@ -32,7 +62,7 @@ export default function App() {
       </nav>
 
       {step === 'address' && (
-        <AddressStep onDone={(sid) => { setSessionId(sid); next('address') }} />
+        <AddressStep onDone={handleSessionCreated} />
       )}
       {step === 'photos' && (
         <PhotoStep

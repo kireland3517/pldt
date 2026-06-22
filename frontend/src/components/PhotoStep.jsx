@@ -256,7 +256,7 @@ export default function PhotoStep({ sessionId, onDone }) {
     photos.every(p => ['done','error','needs_room'].includes(p.status))
 
   const components = Object.values(componentMap).sort((a, b) => b.confidence - a.confidence)
-  const showReview = !loadingResume && (resumedFromSession || (allPhotoDone && components.length > 0))
+  const showReview = !loadingResume && components.length > 0
 
   const lowConfAbsent  = components.filter(c => !c.present && c.confidence < 0.75).map(c => c.component_id)
   const untaggedAlways = [...ALWAYS_COMMON].filter(cid => !(cid in componentMap))
@@ -475,6 +475,11 @@ export default function PhotoStep({ sessionId, onDone }) {
           )}
 
           <div style={{ marginTop: 20 }}>
+            {!allPhotoDone && (
+              <p style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>
+                Photos still processing — you can review above and continue when ready.
+              </p>
+            )}
             <button style={btnStyle} onClick={handleContinue}>
               Continue to questionnaire
             </button>
