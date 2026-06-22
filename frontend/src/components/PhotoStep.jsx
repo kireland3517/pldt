@@ -45,6 +45,24 @@ const ALWAYS_COMMON = new Set([
   'DECK-01','PRCH-01','GAR-01','GUT-01','VENT-01',
 ])
 
+// Safety- and lender-eligible components that require EXPLICIT seller confirmation
+// before a vision-detected defect can enter the mandatory Floor.
+// Default: OUT. Seller "yes" moves it IN. "no" or no answer = staged out.
+const FLOOR_ELIGIBLE = {
+  'ROOF-01':   { why: 'Lenders may require repairs or replacement before approving a buyer's loan.' },
+  'FND-01':    { why: 'Active water or structural movement is a safety concern and can block loan approval.' },
+  'GUT-01':    { why: 'Gutters causing water intrusion into the home are typically flagged by lenders.' },
+  'DECK-01':   { why: 'Open risers, a loose railing, or rot are safety hazards lenders may require fixed.' },
+  'PRCH-01':   { why: 'A missing or loose handrail and open risers are safety hazards.' },
+  'OUT-01':    { why: 'Missing outlet covers or a shock hazard are safety issues.' },
+  'GAR-01':    { why: 'A non-functional garage door is typically required by lenders to be working.' },
+  'HVAC-01':   { why: 'Lenders usually require a functioning HVAC system.' },
+  'WH-HTR-01': { why: 'Lenders typically require a functional, non-leaking water heater.' },
+  'ELEC-01':   { why: 'Exposed wiring, open junction boxes, or an unsafe panel are safety issues lenders will flag.' },
+  'PLMB-01':   { why: 'An active leak or non-functional water supply can block loan approval.' },
+  'DET-01':    { why: 'Smoke and CO detectors are required by most states and lenders.' },
+}
+
 // Human-readable names for the absence panel (components not detected by vision)
 const COMPONENT_NAMES = {
   'ROOF-01': 'Roof (asphalt shingle)',
@@ -192,6 +210,7 @@ export default function PhotoStep({ sessionId, onDone }) {
   const [resumedFromSession, setResumedFromSession] = useState(false)
   const [loadingResume, setLoadingResume]           = useState(true)
   const [unconfirmedAnswers, setUnconfirmedAnswers] = useState({})
+  const [floorConfirm, setFloorConfirm] = useState({}) // cid -> 'yes' | 'no'
   const inputRef   = useRef()
   const queueRef   = useRef([])
   const runningRef = useRef(false)
@@ -318,6 +337,18 @@ export default function PhotoStep({ sessionId, onDone }) {
   const untaggedAlways = [...ALWAYS_COMMON].filter(cid => !(cid in componentMap))
   const unconfirmedCids = [...new Set([...lowConfAbsent, ...untaggedAlways])]
 
+  // Floor gate: vision-detected safety/lender defects that need explicit confirmation.
+  // Threshold: present + (poor|failed) + (medium|high severity) + in eligible set.
+  // Default is OUT — these are staged, not written, until seller says yes.
+  const floorCandidates = components.filter(c =>
+    c.present &&
+    FLOOR_ELIGIBLE[c.component_id] &&
+    (c.condition === 'poor' || c.condition === 'failed') &&
+    (c.severity === 'medium' || c.severity === 'high') &&
+    c.confidence >= 0.5
+  )
+  const allGateAnswered = floorCandidates.every(c => floorConfirm[c.component_id] != null)
+
   // ── continue ──────────────────────────────────────────────────────────────
   function handleContinue() {
     const photoTagsForCapture = components.map(c => ({
@@ -327,18 +358,52 @@ export default function PhotoStep({ sessionId, onDone }) {
       source_photo: (c.sources || [])[0] || 'merged',
     }))
 
-    const sellerConfirmedTags = []
+    // Collect review-table edits keyed by component_id
+    const confirmedMap = {}
     for (const c of components) {
-      const entry = { component_id: c.component_id }
-      let hasEdit = false
-      if (c.present   !== c.orig_present)   { entry.present    = c.present;    hasEdit = true }
-      if (c.condition !== c.orig_condition) { entry.condition  = c.condition;  hasEdit = true }
-      if (c.severity  !== c.orig_severity)  { entry.severity   = c.severity;   hasEdit = true }
-      if (c.seller_note.trim())             { entry.seller_note = c.seller_note.trim(); hasEdit = true }
-      if (hasEdit) sellerConfirmedTags.push(entry)
+      const hasEdit = (
+        c.present   !== c.orig_present   ||
+        c.condition !== c.orig_condition ||
+        c.severity  !== c.orig_severity  ||
+        c.seller_note.trim() !== ''
+      )
+      if (hasEdit) {
+        const entry = { component_id: c.component_id }
+        if (c.present   !== c.orig_present)   entry.present    = c.present
+        if (c.condition !== c.orig_condition) entry.condition  = c.condition
+        if (c.severity  !== c.orig_severity)  entry.severity   = c.severity
+        if (c.seller_note.trim())             entry.seller_note = c.seller_note.trim()
+        confirmedMap[c.component_id] = entry
+      }
     }
 
-    const absencePresenceAnswers = Object.entries(unconfirmedAnswers).map(([cid, val]) => ({
+    // Floor gate answers override the review table for safety/lender components.
+    // 'yes' → keep vision's defect reading, mark as seller-confirmed (enters Floor).
+    // 'no'  → clear condition to 'good' so it cannot trigger floor membership.
+    // Unconfirmed (shouldn't reach here if gate is blocking, but guard it) → also cleared.
+    for (const c of floorCandidates) {
+      const answer = floorConfirm[c.component_id]
+      if (answer === 'yes') {
+        confirmedMap[c.component_id] = {
+          ...(confirmedMap[c.component_id] || {}),
+          component_id: c.component_id,
+          present:   true,
+          condition: c.condition,
+          severity:  c.severity,
+        }
+      } else {
+        // 'no' or unconfirmed: stage out — component is present but defect is not confirmed
+        confirmedMap[c.component_id] = {
+          component_id: c.component_id,
+          present:   true,
+          condition: 'good',
+          severity:  'none',
+        }
+      }
+    }
+
+    const sellerConfirmedTags      = Object.values(confirmedMap)
+    const absencePresenceAnswers   = Object.entries(unconfirmedAnswers).map(([cid, val]) => ({
       question_id: `P-UNCONFIRMED-${cid}`, component_id: cid, answer: val,
     }))
 
@@ -530,13 +595,76 @@ export default function PhotoStep({ sessionId, onDone }) {
             </div>
           )}
 
+          {/* ── floor gate: safety/lender defects require explicit confirmation ── */}
+          {floorCandidates.length > 0 && (
+            <div style={floorGateStyle}>
+              <strong style={{ fontSize: 13 }}>
+                {floorCandidates.length === 1
+                  ? 'Vision spotted 1 issue that may require mandatory repair'
+                  : `Vision spotted ${floorCandidates.length} issues that may require mandatory repair`}
+              </strong>
+              <p style={{ fontSize: 12, color: '#555', margin: '6px 0 14px', lineHeight: 1.5 }}>
+                These items are <em>staged</em> — they won't count as required work unless you confirm
+                they're accurate. Look at the evidence below and answer honestly.
+                A genuine false-positive is easy to reject.
+              </p>
+              {floorCandidates.map(c => {
+                const meta   = FLOOR_ELIGIBLE[c.component_id] || {}
+                const answer = floorConfirm[c.component_id]
+                return (
+                  <div key={c.component_id} style={{
+                    marginBottom: 16, paddingBottom: 16,
+                    borderBottom: '1px solid #e8c97a',
+                  }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                      {c.display_name}
+                    </div>
+                    {c.evidence && (
+                      <div style={{ fontSize: 12, color: '#555', marginBottom: 4 }}>
+                        <em>What vision saw:</em> {c.evidence}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, color: '#7a5c00', marginBottom: 8 }}>
+                      {meta.why}
+                    </div>
+                    <div style={{ fontSize: 13 }}>
+                      <strong>Can you confirm that's accurate?</strong>
+                    </div>
+                    <div style={{ marginTop: 6 }}>
+                      <label style={{ marginRight: 20, fontSize: 13, cursor: 'pointer' }}>
+                        <input type="radio" name={`floor_${c.component_id}`} value="yes"
+                          checked={answer === 'yes'}
+                          onChange={() => setFloorConfirm(prev => ({ ...prev, [c.component_id]: 'yes' }))}
+                          style={{ marginRight: 4 }} />
+                        Yes, that's accurate
+                      </label>
+                      <label style={{ fontSize: 13, cursor: 'pointer' }}>
+                        <input type="radio" name={`floor_${c.component_id}`} value="no"
+                          checked={answer === 'no'}
+                          onChange={() => setFloorConfirm(prev => ({ ...prev, [c.component_id]: 'no' }))}
+                          style={{ marginRight: 4 }} />
+                        No, that's not right
+                      </label>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
           <div style={{ marginTop: 20 }}>
             {!allPhotoDone && (
               <p style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>
                 Photos still processing — you can review above and continue when ready.
               </p>
             )}
-            <button style={btnStyle} onClick={handleContinue}>
+            {floorCandidates.length > 0 && !allGateAnswered && (
+              <p style={{ fontSize: 12, color: '#b45309', marginBottom: 8 }}>
+                Answer each question above before continuing.
+              </p>
+            )}
+            <button style={btnStyle} onClick={handleContinue}
+              disabled={floorCandidates.length > 0 && !allGateAnswered}>
               Continue to questionnaire
             </button>
           </div>
@@ -566,6 +694,10 @@ const cellSelect = { fontSize: 11, padding: '1px 2px' }
 const resumeBanner = {
   background: '#e8f4fd', border: '1px solid #bee3f8', borderRadius: 4,
   padding: '10px 14px', marginBottom: 16, fontSize: 13,
+}
+const floorGateStyle = {
+  background: '#fffbe6', border: '2px solid #f0c040', borderRadius: 6,
+  padding: '16px 18px', marginTop: 20,
 }
 const badge = (color) => ({
   display: 'inline-block', fontSize: 11, padding: '1px 7px', borderRadius: 10,
