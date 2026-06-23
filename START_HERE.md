@@ -25,7 +25,7 @@ validation/     <- answer_key_130_kingfisher.json, README_validation_protocol.md
 docs/           <- Framework.md, UX_UI_Spec.md,
                    Build_Prerequisites_Checklist.md,
                    PreListing_Tool_Technical_Handoff.md
-(root)          <- START_HERE.md
+(root)          <- START_HERE.md, CLAUDE.md
 ```
 
 The one that MUST happen for blindness: `answer_key_130_kingfisher.json` and `README_validation_protocol.md` go into `validation/`, which the running tool's data loader is never pointed at. The rest is tidiness that matches the handoff's repo structure.
@@ -36,13 +36,15 @@ If using Cowork to do it:
 ---
 
 ## Read in this order
-1. docs/Framework.md
-2. docs/UX_UI_Spec.md
-3. docs/Build_Prerequisites_Checklist.md
-4. docs/PreListing_Tool_Technical_Handoff.md  (start with the BLIND RULE at the top)
-5. reference/README_data_dictionary.md, then components_library.csv, instance_schema.csv, and the JSONs
-6. seed/property_inputs_130_kingfisher.json  (front-door inputs only)
-7. validation/README_validation_protocol.md and validation/answer_key_130_kingfisher.json  (running tool must NEVER read these)
+1. CLAUDE.md
+2. docs/Financial_Logic_Contract.md
+3. docs/Framework.md
+4. docs/UX_UI_Spec.md
+5. docs/Build_Prerequisites_Checklist.md
+6. docs/PreListing_Tool_Technical_Handoff.md  (start with the BLIND RULE at the top)
+7. reference/README_data_dictionary.md, then components_library.csv, instance_schema.csv, and the JSONs
+8. seed/property_inputs_130_kingfisher.json  (front-door inputs only)
+9. validation/README_validation_protocol.md and validation/answer_key_130_kingfisher.json  (running tool must NEVER read these)
 
 ## Stack
 React front end, FastAPI/Python back end, Supabase for session state, Railway deploy via GitHub auto-push.
@@ -59,6 +61,7 @@ React front end, FastAPI/Python back end, Supabase for session state, Railway de
 3. SC transfer-tax rate and the 4% vs 6% proration in sc_closing_constants.json.
 4. base_dom (60) in dom_seasonality.json.
 5. The 5 CvV-anchored recoup values (GAR-01, XDR-01, KIT-01, DECK-01, WIN-01); respect Zonda excerpt limits.
+6. The financial formulas in docs/Financial_Logic_Contract.md before trusting net proceeds or ROI.
 
 ## Next action
 Follow the Build Order in the Technical Handoff:
@@ -69,3 +72,4 @@ Follow the Build Order in the Technical Handoff:
 5. Front end: capture/intake flow, then the hub + knob, then sections, then popups and export.
 6. Wire Supabase, deploy to Railway.
 7. Run the BLIND validation test on 130 Kingfisher and score against the quarantined answer key. Never feed the tool answers a normal seller wouldn't know.
+8. Run `python backend/tests/test_financial_logic_contract.py` before trusting any money output.
