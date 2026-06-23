@@ -177,6 +177,15 @@ def compute_net_proceeds(
     }
 
 
+def _selected_mid_cost(row: dict, better_value: str) -> float:
+    """Return the seller-paid mid cost for the chosen action path."""
+    if better_value in ("repair", "upgrade"):
+        return row.get("cost_mid_repair") or 0
+    if better_value == "replace":
+        return row.get("cost_mid_replace") or 0
+    return 0
+
+
 def net_for_plan(
     valuation: dict,
     plan_level: str,            # "leaner" | "recommended" | "do_everything"
@@ -187,7 +196,7 @@ def net_for_plan(
     closing_constants: dict,
     seller_inputs: dict,
     commission_rate: Optional[float] = None,
-    has_hoa: bool = False,
+    has_hoa: bool = False
 ) -> dict:
     """
     High-level helper: picks the right repair cost basis for each plan level
@@ -195,7 +204,7 @@ def net_for_plan(
 
     plan_level:
       "leaner"        → Floor items only (mid cost from floor_result)
-      "recommended"   → Floor + high-recoup items better_value in (repair, replace)
+      "recommended"   → Floor + high-recoup items better_value in (repair, replace, upgrade)
       "do_everything" → all items with better_value != "leave"
     """
     # Sale price: always the as-is mid (seller hasn't done work yet; value
@@ -211,21 +220,16 @@ def net_for_plan(
         repair_cost_mid = floor_result["cost_mid"]
 
     elif plan_level == "recommended":
-        # Floor cost + items with better_value=repair/replace and recoup>=75%
+        # Floor cost + items with better_value=repair/replace/upgrade and recoup>=75%
         repair_cost_mid = floor_result["cost_mid"]
         for row in enriched_rows:
             if row.get("defect_qualifies_floor"):
                 continue  # already in floor cost
             bv = row.get("better_value")
-            if bv in ("repair", "replace"):
+            if bv in ("repair", "replace", "upgrade"):
                 rp = row.get("recoup_pct", 0)
                 if rp >= 75:
-                    mid = (
-                        row.get("cost_mid_repair") if bv == "repair"
-                        else row.get("cost_mid_replace")
-                    )
-                    if mid:
-                        repair_cost_mid += mid
+                    repair_cost_mid += _selected_mid_cost(row, bv)
             elif bv == "credit":
                 mid = row.get("cost_mid_repair") or row.get("cost_mid_replace") or 0
                 concessions_total += mid / 2  # credit is typically ~50% of repair
@@ -233,12 +237,8 @@ def net_for_plan(
     else:  # do_everything
         for row in enriched_rows:
             bv = row.get("better_value")
-            if bv in ("repair", "replace"):
-                mid = (
-                    row.get("cost_mid_repair") if bv == "repair"
-                    else row.get("cost_mid_replace")
-                ) or 0
-                repair_cost_mid += mid
+            if bv in ("repair", "replace", "upgrade"):
+                repair_cost_mid += _selected_mid_cost(row, bv)
             elif bv == "credit":
                 mid = row.get("cost_mid_repair") or row.get("cost_mid_replace") or 0
                 concessions_total += mid / 2
