@@ -95,3 +95,40 @@ def get_session(session_id: str):
         or seller_inputs.get("_photo_tags_draft", [])
     )
     return data
+
+
+@router.get("")
+def list_sessions(limit: int = 20):
+    """
+    Return recent sessions ordered by most recent first.
+    Includes address, created_at, status, and net proceeds from cached compute result.
+    No auth required (single-tenant tool; add RLS when multi-user).
+    """
+    db = get_db()
+    result = db.table(TABLE).select(
+        "id, address, status, created_at, compute_result"
+    ).order("created_at", desc=True).limit(limit).execute()
+
+    sessions = []
+    for row in (result.data or []):
+        cr = row.get("compute_result") or {}
+        # Pull net from recommended plan, fall back to leaner
+        net = None
+        plans = cr.get("plans", {})
+        for level in ("recommended", "leaner", "do_everything"):
+            p = plans.get(level, {})
+            np = p.get("net_proceeds", {}).get("net_proceeds")
+            if np is not None:
+                net = np
+                break
+
+        sessions.append({
+            "id":         row["id"],
+            "address":    row["address"],
+            "created_at": row["created_at"],
+            "status":     row["status"],
+            "net":        net,
+            "has_results": bool(cr),
+        })
+
+    return {"sessions": sessions}

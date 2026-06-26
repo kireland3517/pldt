@@ -77,3 +77,9 @@ export async function updateInputs(sessionId, patch) {
   if (!res.ok) throw new Error((await json(res)).detail || res.statusText)
   return json(res)
 }
+
+export async function listSessions(limit = 20) {
+  const res = await fetch(`${BASE}/session?limit=${limit}`)
+  if (!res.ok) throw new Error(res.statusText)
+  return json(res)
+}
