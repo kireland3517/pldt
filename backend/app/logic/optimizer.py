@@ -173,7 +173,16 @@ def _adjusted_sale_price(
             include = True
 
         if include:
-            uplift += mid * recoup_pct
+            if is_floor:
+                # Floor items remove a buyer discount already baked into as-is comps;
+                # they do not add a premium above baseline. Cap uplift at the repair
+                # cost so a larger quote never inflates the sale price above cost.
+                # NOTE: this is the interim fix. The proper model (fixed haircut
+                # recovery from the library, independent of actual quote) is a
+                # separate design decision — do not treat this cap as final.
+                uplift += min(mid * recoup_pct, mid)
+            else:
+                uplift += mid * recoup_pct
 
     raw_price       = base_mid + uplift
     adjusted_price  = min(raw_price, ceiling)

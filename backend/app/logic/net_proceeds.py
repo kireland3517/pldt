@@ -226,6 +226,12 @@ def net_for_plan(
                     )
                     if mid:
                         repair_cost_mid += mid
+            elif bv == "upgrade":
+                # Upgrade items generate value lift; their cost must also be deducted.
+                # A2: any item contributing uplift must count its seller-paid cost.
+                mid = row.get("cost_mid_repair") or 0
+                if mid:
+                    repair_cost_mid += mid
             elif bv == "credit":
                 mid = row.get("cost_mid_repair") or row.get("cost_mid_replace") or 0
                 concessions_total += mid / 2  # credit is typically ~50% of repair
@@ -238,6 +244,9 @@ def net_for_plan(
                     row.get("cost_mid_repair") if bv == "repair"
                     else row.get("cost_mid_replace")
                 ) or 0
+                repair_cost_mid += mid
+            elif bv == "upgrade":
+                mid = row.get("cost_mid_repair") or 0
                 repair_cost_mid += mid
             elif bv == "credit":
                 mid = row.get("cost_mid_repair") or row.get("cost_mid_replace") or 0

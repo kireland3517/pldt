@@ -103,7 +103,7 @@ function buildRepairPlan(repairTable, floorResult, effectiveIds) {
         && !row.in_floor && row.better_value !== 'upgrade') continue
 
     const cid       = row.component_id
-    const inFloor   = floorIds.has(cid)
+    const inFloor   = row.in_floor || floorIds.has(cid)  // belt-and-suspenders: row field + floor?.items
     const isUpgrade = row.better_value === 'upgrade'
 
     if (inFloor && !isUpgrade) {
@@ -264,7 +264,12 @@ export default function ResultsStep({ sessionId }) {
   const selPlan      = plans[selectedPlan] || {}
   const selNet       = selPlan.net_proceeds || {}
   const basePlanIds  = new Set(selPlan.included_items || [])
-  const floorIds     = new Set((floor?.items || []).map(i => i.component_id))
+  // Belt-and-suspenders: use floor?.items AND row.in_floor on repair_table rows.
+  // If floor?.items is stale or empty, row.in_floor is the authoritative source.
+  const floorIds     = new Set([
+    ...(floor?.items || []).map(i => i.component_id),
+    ...(repair || []).filter(r => r.in_floor).map(r => r.component_id),
+  ])
 
   // effectiveIds: floor items always in, then custom or plan defaults for the rest
   const planNonFloor = new Set([...(selPlan.included_items || [])].filter(id => !floorIds.has(id)))
