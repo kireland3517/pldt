@@ -1,0 +1,55 @@
+{
+  "__fixture_guard__": "TEST-ONLY — never imported by production capture path",
+  "GAR-01": {
+    "component_id": "GAR-01",
+    "present": true,
+    "condition_detected": "non-functional door",
+    "severity_detected": "high",
+    "defect_qualifies_floor": true,
+    "shared_structure": null,
+    "repair_low": 150, "repair_high": 400,
+    "replace_low": 800, "replace_high": 1500,
+    "repairable": true, "creditable": true,
+    "recent_replacement": false, "upgrade_candidate": false,
+    "confidence": 0.9, "source": "questionnaire", "notes": "Q-GAR-1=does_not_work"
+  },
+  "FND-01": {
+    "component_id": "FND-01",
+    "present": true,
+    "condition_detected": "active water in crawlspace; standing moisture",
+    "severity_detected": "high",
+    "defect_qualifies_floor": true,
+    "shared_structure": null,
+    "repair_low": 3000, "repair_high": 5000,
+    "replace_low": 8000, "replace_high": 15000,
+    "repairable": true, "creditable": false,
+    "recent_replacement": false, "upgrade_candidate": false,
+    "confidence": 0.85, "source": "questionnaire", "notes": "active water blocks FHA/VA"
+  },
+  "KIT-01": {
+    "component_id": "KIT-01",
+    "present": true,
+    "condition_detected": "dated / upgrade opportunity",
+    "severity_detected": "low",
+    "defect_qualifies_floor": false,
+    "shared_structure": null,
+    "repair_low": 2000, "repair_high": 4000,
+    "replace_low": 8000, "replace_high": 20000,
+    "repairable": true, "creditable": false,
+    "recent_replacement": false, "upgrade_candidate": true,
+    "confidence": 0.8, "source": "questionnaire", "notes": "cabinet boxes solid; refresh viable"
+  },
+  "WIN-01": {
+    "component_id": "WIN-01",
+    "present": true,
+    "condition_detected": "good condition",
+    "severity_detected": "none",
+    "defect_qualifies_floor": false,
+    "shared_structure": null,
+    "repair_low": 200, "repair_high": 600,
+    "replace_low": 300, "replace_high": 800,
+    "repairable": true, "creditable": true,
+    "recent_replacement": false, "upgrade_candidate": false,
+    "confidence": 0.7, "source": "photo", "notes": "no defect — should be excluded entirely"
+  }
+}

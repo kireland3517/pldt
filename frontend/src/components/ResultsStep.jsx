@@ -290,7 +290,14 @@ export default function ResultsStep({ sessionId }) {
 
   return (
     <div>
-      <h2 style={{ fontSize: 16, marginBottom: 4 }}>Report</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    marginBottom: 4 }}>
+        <h2 style={{ fontSize: 16, margin: 0 }}>Report</h2>
+        <span style={{ fontSize: 11, color: '#aaa', fontFamily: 'monospace' }}
+              title='Copy this ID to resume the session later'>
+          session: {sessionId}
+        </span>
+      </div>
 
       {/* ── Valuation ── */}
       <section style={sectionStyle}>

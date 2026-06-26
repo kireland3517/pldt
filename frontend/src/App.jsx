@@ -9,6 +9,7 @@ const STEPS = ['address', 'photos', 'questionnaire', 'results']
 export default function App() {
   const [step, setStep] = useState('address')
   const [sessionId, setSessionId] = useState(null)
+  const [resumeInput, setResumeInput] = useState('')
   const [photoData, setPhotoData] = useState({
     photoTagsForCapture: [],
     sellerConfirmedTags: [],
@@ -47,6 +48,17 @@ export default function App() {
     next('address')
   }
 
+  function handleResume() {
+    const sid = resumeInput.trim()
+    if (!sid) return
+    setSessionId(sid)
+    setStep('results')
+    const url = new URL(window.location)
+    url.searchParams.set('session', sid)
+    url.searchParams.set('step', 'results')
+    window.history.replaceState({}, '', url)
+  }
+
   return (
     <div style={{ maxWidth: 760, margin: '0 auto', padding: '24px 16px', fontFamily: 'system-ui, sans-serif' }}>
       <h1 style={{ fontSize: 20, marginBottom: 4 }}>Pre-Listing Decision Tool</h1>
@@ -62,7 +74,34 @@ export default function App() {
       </nav>
 
       {step === 'address' && (
-        <AddressStep onDone={handleSessionCreated} />
+        <div>
+          <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 4,
+                        padding: '12px 16px', marginBottom: 20 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: '#0369a1' }}>
+              Resume an existing session
+            </div>
+            <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
+              Paste a session ID to jump straight to your results — no re-upload needed.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                type='text'
+                placeholder='Session ID (e.g. 3f7a…)'
+                value={resumeInput}
+                onChange={e => setResumeInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleResume()}
+                style={{ flex: 1, padding: '5px 8px', fontSize: 13, border: '1px solid #93c5fd', borderRadius: 3 }}
+              />
+              <button onClick={handleResume}
+                style={{ padding: '5px 14px', fontSize: 13, cursor: 'pointer',
+                         background: '#0369a1', color: '#fff', border: 'none', borderRadius: 3 }}>
+                Go to results
+              </button>
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>— or start a new session —</div>
+          <AddressStep onDone={handleSessionCreated} />
+        </div>
       )}
       {step === 'photos' && (
         <PhotoStep
