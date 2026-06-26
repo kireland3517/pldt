@@ -58,6 +58,10 @@ def attach_recoup(repair_rows: List[dict], library: dict) -> List[dict]:
             "is_defect_clearing":   bool(is_defect),
             "effective_recoup_label": effective_recoup_label,
             "better_value":         better_value,
+            # V5: copy eligibility flags so floor.py _floor_reason can show real reason
+            "safety_eligible":      bool(lib.get("safety_eligible")),
+            "lender_eligible":      bool(lib.get("lender_eligible")),
+            "essential_when_needed": bool(lib.get("essential_when_needed")),
         })
 
     return enriched
@@ -107,15 +111,11 @@ def _refined_call(row: dict, recoup_pct: float, source: str, is_defect: bool) ->
     if any(sig in cond_lower for sig in _TERMINAL_SIGNALS):
         return "replace"
 
-    # Floor items must be fixed; credit is not acceptable
+    # Floor items must be fixed; credit is not acceptable.
+    # Action is driven by condition severity (terminal signals above) and
+    # repairability — NOT by ROI. A4: recoup does not govern floor item action.
     if in_floor:
-        if repairable:
-            # Prefer repair unless replace is only marginally more and recoup is high
-            if (repair_mid is not None and replace_mid is not None
-                    and replace_mid < repair_mid * 1.5 and recoup_pct >= 150):
-                return "replace"
-            return "repair"
-        return "replace"
+        return "repair" if repairable else "replace"
 
     # Non-floor: use ROI to guide
     if recoup_pct >= 100 and repairable:

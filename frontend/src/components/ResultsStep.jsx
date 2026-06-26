@@ -56,7 +56,17 @@ function skipReason(item, planLevel) {
 // intentionally omitted to keep the client-side formula simple. Hit "Apply and
 // recompute" for the exact backend number.
 
-function computeLiveNet(baseNet, repairTable, basePlanIds, effectiveIds, customCosts) {
+// V6A: commissionRate (decimal, e.g. 0.06) and transferTaxRate (e.g. 0.0037) are needed
+// because repair-item uplift lands in the sale price, which is subject to both taxes.
+// Net change from an item = -cost + uplift*(1 - commissionRate - transferTaxRate)
+// => factor becomes (1 - recoup*(1-commissionRate-transferTaxRate)) rather than (1-recoup).
+// V6B: payoff changes are dollar-for-dollar shifts in net; track delta vs base.
+function computeLiveNet(
+  baseNet, repairTable, basePlanIds, effectiveIds, customCosts,
+  commissionRate = 0, transferTaxRate = 0,
+  payoffTotal = 0, basePayoffTotal = 0
+) {
+  const upliftFactor = 1 - commissionRate - transferTaxRate
   let delta = 0
   for (const row of repairTable) {
     const cid = row.component_id
@@ -64,11 +74,13 @@ function computeLiveNet(baseNet, repairTable, basePlanIds, effectiveIds, customC
     const recoup = (row.recoup_pct || 0) / 100
     const wasIn = basePlanIds.has(cid)
     const isIn  = effectiveIds.has(cid)
+    // A6: net impact of each dollar of cost = -(1) + recoup*upliftFactor
+    const netCostFactor = 1 - recoup * upliftFactor
 
     if (row.in_floor) {
       // Floor items can't be toggled, but cost edits still flow to net
       if (wasIn && isIn && customCosts[cid] != null) {
-        delta += (defaultMid - customCosts[cid]) * (1 - recoup)
+        delta += (defaultMid - customCosts[cid]) * netCostFactor
       }
       continue
     }
@@ -76,13 +88,15 @@ function computeLiveNet(baseNet, repairTable, basePlanIds, effectiveIds, customC
     const usedCost = customCosts[cid] != null ? customCosts[cid] : defaultMid
 
     if (!wasIn && isIn) {
-      delta -= usedCost * (1 - recoup)
+      delta -= usedCost * netCostFactor
     } else if (wasIn && !isIn) {
-      delta += defaultMid * (1 - recoup)
+      delta += defaultMid * netCostFactor
     } else if (wasIn && isIn && customCosts[cid] != null) {
-      delta += (defaultMid - customCosts[cid]) * (1 - recoup)
+      delta += (defaultMid - customCosts[cid]) * netCostFactor
     }
   }
+  // V6B: payoff is dollar-for-dollar (no commission/tax applies to it)
+  delta -= (payoffTotal - basePayoffTotal)
   return (baseNet || 0) + delta
 }
 
@@ -281,7 +295,17 @@ export default function ResultsStep({ sessionId }) {
      [...customItems].some(id => !planNonFloor.has(id)))
 
   const baseNet  = selNet.net_proceeds ?? 0
-  const liveNet  = computeLiveNet(baseNet, repair, basePlanIds, effectiveIds, customCosts)
+  // V6B: base payoff from the stored result (before any live knob change)
+  const si = result.seller_inputs || {}
+  const basePayoffTotal = si.payoff_primary != null
+    ? (si.payoff_primary || 0) + (si.payoff_secondary || 0) + (si.payoff_other || 0)
+    : (si.mortgage_payoff || 0)
+  const SC_TRANSFER_TAX = 0.0037  // South Carolina deed recording / transfer tax
+  const liveNet  = computeLiveNet(
+    baseNet, repair, basePlanIds, effectiveIds, customCosts,
+    commission / 100, SC_TRANSFER_TAX,
+    payoffTotal, basePayoffTotal
+  )
   const netDelta = liveNet - baseNet
   const hasCustomCosts = Object.keys(customCosts).length > 0
 

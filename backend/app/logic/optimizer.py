@@ -85,12 +85,8 @@ def build_plans(
         # Summarize which items are included in this plan
         included = _items_for_level(enriched_rows, floor_result, level)
 
-        # Repair spend: pull from net_proceeds line_items for accuracy
-        repair_spend = next(
-            (li["amount"] for li in np_result.get("line_items", [])
-             if li["label"] == "Pre-listing repairs (plan)"),
-            0.0,
-        )
+        # Repair spend: read direct field (A2 — not scraped from display label)
+        repair_spend = np_result.get("repair_spend", 0.0)
 
         # Plan-level ROI%: (value_lift - repair_spend) / repair_spend * 100
         # Positive = seller gains more than they spend; capped at ceiling.

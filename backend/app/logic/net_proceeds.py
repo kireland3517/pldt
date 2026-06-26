@@ -174,6 +174,7 @@ def compute_net_proceeds(
         "line_items":        line_items,
         "commission_rate":   rate,
         "has_hoa":           has_hoa,
+        "repair_spend":      round(plan_repair_cost_mid, 2),  # A2: direct field, not scraped from label
     }
 
 
