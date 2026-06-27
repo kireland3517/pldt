@@ -85,7 +85,7 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
     if property_key:
         try:
             prop = load_property_inputs(property_key)
-        except FileNotFoundError:
+        except (FileNotFoundError, ValueError):
             prop = session.get("property_json") or {}
     else:
         prop = session.get("property_json") or {}
