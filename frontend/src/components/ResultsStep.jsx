@@ -1155,3 +1155,4 @@ const noteStyle     = { fontSize: 12, color: '#666', marginTop: 6, marginBottom:
 const tableStyle    = { borderCollapse: 'collapse', width: '100%', fontSize: 13 }
 const labelStyle    = { display: 'block', fontSize: 13, marginBottom: 10 }
 const btnStyle      = { padding: '7px 18px', fontSize: 13, cursor: 'pointer', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: 3 }
+const detailsLink   = { fontSize: 12, color: '#2563eb', cursor: 'pointer', textDecoration: 'underline' }
