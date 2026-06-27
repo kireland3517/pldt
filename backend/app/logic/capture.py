@@ -503,9 +503,34 @@ def qualify_floor_members(
             item["defect_qualifies_floor"] = False
             continue
 
-        item["defect_qualifies_floor"] = defect_matches_floor_trigger(
-            cid, item["condition_detected"]
-        )
+        # Expand enum condition values before keyword matching.
+        # The questionnaire stores short enum values ('poor', 'failed');
+        # the keyword matcher expects expanded text ('moisture', 'non-functional').
+        # _CONDITION_ENUM_MAP already defines this expansion — reuse it.
+        raw_cond = item["condition_detected"] or ""
+        expanded_cond = _CONDITION_ENUM_MAP.get(raw_cond.lower(), (raw_cond,))[0]
+
+        # Also build a combined string including any component-specific
+        # details from notes so keyword matching has the richest input.
+        notes_text = (item.get("notes") or "").lower()
+        full_text   = f"{expanded_cond} {notes_text}".strip()
+
+        keyword_match = defect_matches_floor_trigger(cid, full_text)
+
+        # Severity fallback: 'failed' or high severity on a lender/safety-eligible
+        # component always qualifies for the Floor, even without a keyword match.
+        # Rationale: 'failed' = the system is non-functional, which IS the trigger
+        # for components like GAR-01, DECK-01, HVAC-01. The keyword list is
+        # written for expanded-text conditions; 'failed' is the questionnaire's
+        # shorthand for the same state.
+        sev = (item.get("severity_detected") or "").lower()
+        cond_lower = expanded_cond.lower()
+        severity_fallback = (
+            "failed" in cond_lower
+            or sev == "high"
+        ) and ref.is_floor_eligible(cid)
+
+        item["defect_qualifies_floor"] = keyword_match or severity_fallback
 
     return instance
 
