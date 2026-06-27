@@ -61,7 +61,7 @@ def build_plans(
         # Adjusted sale price: as-is base + recoup value of plan upgrades,
         # capped at the comps ceiling so we never project above market top.
         ceiling = valuation.get("high", float("inf"))
-        adjusted_price, raw_uplift, cap_was_binding = _adjusted_sale_price(
+        adjusted_price, raw_uplift, cap_was_binding, lender_gate_items = _adjusted_sale_price(
             valuation["mid"], ceiling, enriched_rows, level
         )
         value_lift_capped = round(adjusted_price - valuation["mid"], 2)
@@ -97,6 +97,21 @@ def build_plans(
         else:
             plan_roi_pct = None  # nothing spent; ROI undefined
 
+        # Lender gate: annotate major lender items with retail vs investor pricing.
+        # investor_price = 75% of retail adjusted price (approximate).
+        # Only major+lender items; moderate/minor lender items (e.g. garage door)
+        # do NOT trigger investor-regime pricing — they take tier multiplier only.
+        lender_gate = None
+        if lender_gate_items:
+            investor_price = round(adjusted_price * INVESTOR_CAP_RATE, -2)
+            lender_gate = {
+                "has_major_lender_items": True,
+                "retail_price":           round(adjusted_price, 2),
+                "investor_price":         investor_price,
+                "investor_gap":           round(adjusted_price - investor_price, 2),
+                "items":                  lender_gate_items,
+            }
+
         plans[level] = {
             "plan_level":               level,
             "adjusted_sale_price":      round(adjusted_price, 2),
@@ -111,11 +126,31 @@ def build_plans(
             "net_proceeds":             np_result,
             "included_items":           included,
             "item_count":               len(included),
+            "lender_gate":              lender_gate,
         }
 
     # Add a simple scorecard comparing plans
     plans["scorecard"] = _scorecard(plans)
     return plans
+
+
+# Haircut-model tier multipliers (A5 fix).
+# Floor/defect-clearing items use these instead of recoup_pct.
+# Recovery = library_cost_mid × multiplier.
+# Anchoring to library cost (not contractor quote) prevents quote inflation
+# from inflating the projected sale price.
+#
+# major (1.5×): foundation, active roof leak, electrical panel — true buyer-pool
+#   collapse if unrepaired; large uncertainty discount removed by repair.
+# moderate (1.15×): HVAC, deck-structural, garage door, active plumbing leak —
+#   expensive but defined scope; moderate psychological discount.
+# minor (1.0×): handrails, GFCI outlets, detectors — cheap code items;
+#   trivial discount, basically cost recovery.
+#
+# Investor-cap rule: only major+lender items trigger the 75%-ARV investor regime.
+# A $3k garage door (moderate lender item) does NOT crater the whole valuation.
+TIER_MULTIPLIERS = {"major": 1.5, "moderate": 1.15, "minor": 1.0}
+INVESTOR_CAP_RATE = 0.75   # 75% of retail ARV for investor/cash-only scenario
 
 
 def _adjusted_sale_price(
@@ -127,29 +162,40 @@ def _adjusted_sale_price(
     """
     Estimate value uplift for a given plan level, capped at comp ceiling.
 
-    Defect-clearing items: their "discount removal" is already baked into
-    the base as-is valuation (the comps reflect move-in-ready homes; a
-    defective home sells for less). We model the uplift for defect-clearing
-    as recovering the buyer haircut, estimated at library recoup_pct of mid
-    repair cost (recoup_pct is typically set to 100% for Floor items).
+    Floor/defect-clearing items (A5 haircut model):
+      Recovery = library_cost_mid × tier_multiplier
+      Tier multipliers: major 1.5×, moderate 1.15×, minor 1.0×
+      Library cost is the anchor — a higher contractor quote cannot inflate recovery.
+      Tiers assigned per component in components_library.csv severity_tier field.
 
-    Upgrades: library recoup_pct fraction of mid repair cost.
+    Upgrade (discretionary) items:
+      uplift = library_cost_mid × recoup_pct   (unchanged from original model)
 
-    For the "leaner" plan (Floor only), only defect-clearing uplift applies.
+    Investor-cap lender gate (major+lender items only):
+      When a major lender-eligible item IS in the plan, we record the retail price.
+      If it were unrepaired, the investor price would be ≈75% of retail.
+      Returned in lender_gate_items for the frontend to surface as a two-path choice.
+      Minor/moderate lender items do NOT trigger the investor cap.
 
-    Returns (adjusted_price, uncapped_uplift, cap_was_binding).
-    cap_was_binding is True when the raw uplift would have exceeded ceiling.
+    Returns (adjusted_price, uncapped_uplift, cap_was_binding, lender_gate_items).
     """
     uplift = 0.0
+    lender_gate_items = []   # major+lender items in this plan level
 
     for row in enriched_rows:
         bv = row.get("better_value")
         if bv not in ("repair", "replace", "upgrade"):
             continue
 
-        recoup_pct = row.get("recoup_pct", 0) / 100.0
-        is_floor   = row.get("defect_qualifies_floor", False)
-        mid = (
+        is_floor = row.get("defect_qualifies_floor", False)
+
+        # Library-anchored cost — never use contractor quote for recovery math
+        lib_mid = (
+            row.get("library_cost_mid_repair")   if bv in ("repair", "upgrade")
+            else row.get("library_cost_mid_replace")
+        )
+        # Fallback to instance cost if library anchor missing (data gap)
+        mid = lib_mid or (
             row.get("cost_mid_repair") if bv in ("repair", "upgrade")
             else row.get("cost_mid_replace")
         )
@@ -162,7 +208,6 @@ def _adjusted_sale_price(
         elif level == "recommended":
             if is_floor or row.get("recoup_pct", 0) >= RECOMMENDED_RECOUP_THRESHOLD:
                 include = True
-            # Upgrade items with high recoup also appear in recommended
             if bv == "upgrade" and row.get("recoup_pct", 0) >= RECOMMENDED_RECOUP_THRESHOLD:
                 include = True
         elif level == "do_everything":
@@ -170,21 +215,36 @@ def _adjusted_sale_price(
 
         if include:
             if is_floor:
-                # Floor items remove a buyer discount already baked into as-is comps;
-                # they do not add a premium above baseline. Cap uplift at the repair
-                # cost so a larger quote never inflates the sale price above cost.
-                # NOTE: this is the interim fix. The proper model (fixed haircut
-                # recovery from the library, independent of actual quote) is a
-                # separate design decision — do not treat this cap as final.
-                uplift += min(mid * recoup_pct, mid)
+                # Tier-multiplier recovery (A5 haircut model)
+                tier = row.get("severity_tier") or "minor"
+                mult = TIER_MULTIPLIERS.get(tier, 1.0)
+                uplift += mid * mult
+
+                # Lender gate: investor_cap_eligible is set in recoup.py by comparing
+                # the DETECTED severity against per-component threshold from the library.
+                # A minor defect in ELEC-01 (missing cover) has investor_cap_eligible=False.
+                # An unsafe panel in ELEC-01 has investor_cap_eligible=True.
+                # GAR-01/HVAC-01 etc. always False — no threshold in library.
+                if (row.get("investor_cap_eligible")
+                        and row.get("in_floor")):
+                    lender_gate_items.append({
+                        "component_id":       row["component_id"],
+                        "display_name":       row.get("display_name", row["component_id"]),
+                        "severity_tier":      tier,
+                        "severity_detected":  row.get("severity_detected", ""),
+                        "library_cost_mid":   round(mid, 0),
+                        "recovery_uplift":    round(mid * mult, 0),
+                    })
             else:
+                # Discretionary upgrades: recoup_pct unchanged
+                recoup_pct = row.get("recoup_pct", 0) / 100.0
                 uplift += mid * recoup_pct
 
     raw_price       = base_mid + uplift
     adjusted_price  = min(raw_price, ceiling)
     cap_was_binding = raw_price > ceiling
 
-    return adjusted_price, uplift, cap_was_binding
+    return adjusted_price, uplift, cap_was_binding, lender_gate_items
 
 
 def _items_for_level(enriched_rows: list, floor_result: dict, level: str) -> list:

@@ -22,6 +22,25 @@ from typing import List
 # The 5 CvV-anchored values from the library (verify source in README_data_dictionary)
 _CVV_ANCHORED = {"GAR-01", "XDR-01", "KIT-01", "DECK-01", "WIN-01"}
 
+# Ordinal severity ranking for investor_cap_eligible comparison.
+# Vocabulary matches condition.py (high / medium / low / None).
+# severity_detected on each enriched row must be >= the component's
+# investor_cap_severity_threshold from the library for the cap to fire.
+#
+# FAIL-SAFE: any string NOT in this dict — including None, "", "unknown",
+# "inspect", "unclear", "pending" — gets the dict default of 0.
+# Rank 0 is below every threshold (FND-01 medium=2, ROOF-01/ELEC-01 high=3).
+# Unknown or missing severity NEVER triggers the investor cap.
+# This is the right default: uncertain detection should route to "get it
+# inspected", not to the heaviest pricing hammer in the model.
+_SEVERITY_RANK = {
+    "none":   0,   # good condition / no defect
+    "low":    1,   # minor issue (e.g. ELEC-01 missing cover plate)
+    "medium": 2,   # moderate issue (e.g. FND-01 active moisture → FHA gate)
+    "high":   3,   # major / serious defect (ROOF-01 active leak, ELEC-01 unsafe panel)
+    # Keys NOT in this dict (None, "", "unknown", "inspect", etc.): default 0 → no cap
+}
+
 
 def attach_recoup(repair_rows: List[dict], library: dict) -> List[dict]:
     """
@@ -51,6 +70,36 @@ def attach_recoup(repair_rows: List[dict], library: dict) -> List[dict]:
         # Refined better_value call
         better_value = _refined_call(row, recoup_pct, recoup_source, is_defect)
 
+        # Library cost anchors — used by optimizer tier-multiplier model.
+        # These are the LIBRARY midpoints, independent of any contractor quote
+        # the seller may enter in the UI. Recovery is capped to library cost
+        # so overpaying a contractor cannot inflate projected sale price.
+        def _lib_mid(lo_key, hi_key):
+            lo = lib.get(lo_key)
+            hi = lib.get(hi_key)
+            try:
+                lo, hi = float(lo), float(hi)
+                return round((lo + hi) / 2, 2)
+            except (TypeError, ValueError):
+                return None
+
+        # Investor-cap eligibility: fires only when BOTH conditions hold:
+        #   1. component has an investor_cap_severity_threshold in the library
+        #   2. the DETECTED severity for this instance >= that threshold
+        # This prevents a missing cover plate on ELEC-01 (severity=low)
+        # from triggering investor pricing. Only unsafe-panel-level defects do.
+        # Same for ROOF-01 (active leak = high, sound roof = no cap) and
+        # FND-01 (active moisture = medium+, dry crawlspace = no cap).
+        # Fail-safe: None/empty/"unknown" → _SEVERITY_RANK default 0 → cap never fires.
+        _cap_threshold_str = (lib.get("investor_cap_severity_threshold") or "").strip()
+        if _cap_threshold_str and lib.get("lender_eligible"):
+            detected_sev = (row.get("severity_detected") or "").lower().strip()
+            detected_rank = _SEVERITY_RANK.get(detected_sev, 0)
+            threshold_rank = _SEVERITY_RANK.get(_cap_threshold_str, 999)
+            _investor_cap_eligible = detected_rank >= threshold_rank
+        else:
+            _investor_cap_eligible = False
+
         enriched.append({
             **row,
             "recoup_pct":           recoup_pct,
@@ -62,6 +111,14 @@ def attach_recoup(repair_rows: List[dict], library: dict) -> List[dict]:
             "safety_eligible":      bool(lib.get("safety_eligible")),
             "lender_eligible":      bool(lib.get("lender_eligible")),
             "essential_when_needed": bool(lib.get("essential_when_needed")),
+            # Haircut model: library cost anchors + severity tier
+            "severity_tier":        lib.get("severity_tier", "") or "",
+            "library_cost_mid_repair":   _lib_mid("repair_low",  "repair_high"),
+            "library_cost_mid_replace":  _lib_mid("replace_low", "replace_high"),
+            # investor_cap_eligible: True only when detected severity >= threshold
+            # (e.g. ELEC-01 minor defect = False; ELEC-01 unsafe panel = True)
+            "investor_cap_eligible":      _investor_cap_eligible,
+            "investor_cap_severity_threshold": _cap_threshold_str,
         })
 
     return enriched

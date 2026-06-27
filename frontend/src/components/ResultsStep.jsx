@@ -277,6 +277,9 @@ export default function ResultsStep({ sessionId }) {
 
   const selPlan      = plans[selectedPlan] || {}
   const selNet       = selPlan.net_proceeds || {}
+  // Lender gate: only populated when a major lender-blocking item
+  // with a hard-stop detected severity is in this plan's floor.
+  const lenderGate   = selPlan.lender_gate || null
   const basePlanIds  = new Set(selPlan.included_items || [])
   // Belt-and-suspenders: use floor?.items AND row.in_floor on repair_table rows.
   // If floor?.items is stale or empty, row.in_floor is the authoritative source.
@@ -540,6 +543,73 @@ export default function ResultsStep({ sessionId }) {
               Required-to-sell total: <strong>{fmtRange(floor.cost_low, floor.cost_high)}</strong>
               {floor.cost_mid ? ` (mid ${fmt(floor.cost_mid)})` : ''}
             </div>
+
+            {/* Lender gate: two-path choice for major financing-blocking items */}
+            {lenderGate && (
+              <div style={{
+                marginTop: 16,
+                padding: '14px 16px',
+                background: '#fafafa',
+                border: '1px solid #e5e7eb',
+                borderRadius: 6,
+                fontSize: 13,
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: 8, color: '#374151' }}>
+                  Why these repairs matter for your buyer pool
+                </div>
+                <p style={{ margin: '0 0 10px', color: '#4b5563', lineHeight: 1.5 }}>
+                  Homes with active foundation moisture, roof leaks, or serious electrical issues
+                  usually can&apos;t be purchased with a conventional mortgage, FHA, or VA loan —
+                  because the lender requires the issue resolved before they&apos;ll fund the loan.
+                  That means most buyers can&apos;t purchase as-is, so the home tends to sell
+                  to a cash investor at a lower price.
+                  Addressing these before listing keeps your home open to all buyers.
+                </p>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+                  <div style={{
+                    flex: 1, minWidth: 160,
+                    padding: '10px 14px',
+                    background: '#f0fdf4',
+                    border: '1px solid #bbf7d0',
+                    borderRadius: 5,
+                  }}>
+                    <div style={{ fontSize: 11, color: '#166534', fontWeight: 600, marginBottom: 3 }}>
+                      REPAIRED — financed buyers included
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: '#15803d' }}>
+                      {fmt(lenderGate.retail_price)}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>
+                      Full buyer pool, retail comp pricing
+                    </div>
+                  </div>
+                  <div style={{
+                    flex: 1, minWidth: 160,
+                    padding: '10px 14px',
+                    background: '#f9fafb',
+                    border: '1px solid #d1d5db',
+                    borderRadius: 5,
+                  }}>
+                    <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 3 }}>
+                      LEFT AS-IS — cash investors only
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: '#374151' }}>
+                      ~{fmt(lenderGate.investor_price)}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#6b7280', marginTop: 3 }}>
+                      Approx. 75% of retail — investor pricing
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: '#6b7280' }}>
+                  Estimated gap: <strong style={{ color: '#374151' }}>{fmt(lenderGate.investor_gap)}</strong>
+                  {' '}between the two paths.
+                  Selling as-is to a cash buyer is a real option — for speed or when repair
+                  isn&apos;t feasible. This comparison shows the trade-off so you can choose with
+                  full information.
+                </div>
+              </div>
+            )}
           </div>
         )}
 
