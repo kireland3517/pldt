@@ -299,22 +299,135 @@ export default function ResultsStep({ sessionId }) {
     style.id = 'pldt-print-styles'
     style.textContent = `
       @media print {
-        .no-print { display: none !important; }
+        /* ── Visibility ── */
+        .no-print  { display: none !important; }
         .print-only { display: block !important; }
-        @page { margin: 2cm; }
-        body { font-size: 10pt; }
+
+        /* ── Global color / chrome reset ── */
+        * {
+          color: #000 !important;
+          background-color: transparent !important;
+          background-image: none !important;
+          box-shadow: none !important;
+        }
+
+        /* ── Page ── */
+        @page { margin: 0.75in; }
+        body {
+          font-family: Georgia, 'Times New Roman', serif;
+          font-size: 10pt;
+          line-height: 1.45;
+          padding-bottom: 22pt;
+        }
+
+        /* ── Strip card chrome ── */
+        section {
+          border: none !important;
+          border-radius: 0 !important;
+          padding: 0 !important;
+          margin: 0 0 20pt !important;
+        }
+        div[style] { border-radius: 0 !important; }
+
+        /* ── Headings ── */
+        h2 { font-size: 13pt; font-weight: 700; margin: 0 0 4pt; page-break-after: avoid; }
+        h3 {
+          font-size: 11pt; font-weight: 700;
+          margin: 0 0 8pt; padding-bottom: 4pt;
+          border: none !important;
+          border-bottom: 1pt solid #000 !important;
+          page-break-after: avoid;
+        }
+        p { font-size: 9pt; margin: 0 0 4pt; line-height: 1.45; }
+
+        /* ── Plan comparison cards: strip boxes, keep flex layout ── */
+        .plan-card {
+          border: none !important;
+          border-right: 0.5pt solid #bbb !important;
+          border-radius: 0 !important;
+          padding: 6pt 14pt 6pt 0 !important;
+          cursor: default !important;
+        }
+        .plan-card:last-child { border-right: none !important; }
+        .plan-card-label { font-size: 10pt !important; font-weight: 700 !important; }
+        .plan-card-desc  { font-size: 8pt !important; margin-bottom: 4pt !important; }
+        .plan-card-net   { font-size: 13pt !important; font-weight: 700 !important; }
+        .plan-card-selected .plan-card-label {
+          text-decoration: underline !important;
+          text-underline-offset: 2pt;
+        }
+
+        /* ── Sub-section labels (Required / Optional / Quick refresh) ── */
+        .section-head {
+          display: block !important;
+          font-size: 10.5pt !important;
+          font-weight: 700 !important;
+          border-radius: 0 !important;
+          border: none !important;
+          border-top: 1.5pt solid #000 !important;
+          padding: 6pt 0 3pt !important;
+          margin: 14pt 0 5pt !important;
+          page-break-after: avoid;
+        }
+
+        /* ── Tables ── */
+        table {
+          width: 100% !important;
+          border-collapse: collapse !important;
+          font-size: 9pt !important;
+          page-break-inside: auto;
+          margin: 0 0 6pt;
+        }
+        thead { display: table-header-group; }
+        th {
+          border: none !important;
+          border-bottom: 1pt solid #000 !important;
+          font-weight: 700 !important;
+          font-size: 8.5pt !important;
+          padding: 3pt 6pt !important;
+          text-align: left !important;
+          white-space: nowrap;
+          letter-spacing: 0.01em;
+        }
+        td {
+          border: none !important;
+          border-bottom: 0.5pt solid #ddd !important;
+          padding: 3pt 6pt !important;
+          vertical-align: top !important;
+          font-size: 9pt !important;
+        }
+        tbody tr:last-child td { border-bottom: 1pt solid #000 !important; }
+        tr { page-break-inside: avoid; page-break-after: auto; }
+
+        /* ── Right-align currency / numeric columns ── */
+        th.num, td.num { text-align: right !important; }
+
+        /* ── Form controls ── */
+        input[type="checkbox"],
+        input[type="range"],
+        input[type="number"] { display: none !important; }
+
+        /* ── Interactive text decoration on cost cells ── */
+        span[style*="dotted"] { text-decoration: none !important; }
+
+        /* ── Expand collapsed details ── */
         details { display: block !important; }
         details > summary { display: none !important; }
-        section { border: 1px solid #bbb !important; background: #fff !important;
-                  box-shadow: none !important; page-break-inside: avoid; }
-        table { width: 100% !important; border-collapse: collapse !important;
-                font-size: 9pt; page-break-inside: auto; }
-        thead { display: table-header-group; }
-        th { background: #f0f0f0 !important; color: #000 !important;
-             padding: 3pt 5pt !important; border: 1px solid #aaa !important; text-align: left; }
-        td { padding: 3pt 5pt !important; border: 1px solid #ddd !important; vertical-align: top; }
-        tr { page-break-inside: avoid; page-break-after: auto; }
-        input[type="checkbox"], input[type="range"], input[type="number"] { display: none !important; }
+
+        /* ── Fixed footer on every page ── */
+        .print-footer {
+          display: flex !important;
+          position: fixed;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          font-size: 7.5pt;
+          font-family: Georgia, serif;
+          border-top: 0.5pt solid #aaa;
+          padding: 3pt 0 0;
+          justify-content: space-between;
+          background: #fff !important;
+        }
       }
     `
     document.head.appendChild(style)
@@ -530,7 +643,7 @@ export default function ResultsStep({ sessionId }) {
       )}
 
       {/* ── Plan cards ── */}
-      <section className="no-print" style={sectionStyle}>
+      <section style={sectionStyle}>
         <h3 style={h3}>Plans — estimated net proceeds</h3>
         <p style={noteStyle}>
           Net proceeds = sale price − mandatory work − plan repairs − closing costs − payoff.
@@ -543,15 +656,16 @@ export default function ResultsStep({ sessionId }) {
             return (
               <div key={key}
                 style={planCardStyle(selectedPlan === key)}
+                className={selectedPlan === key ? 'plan-card plan-card-selected' : 'plan-card'}
                 onClick={() => setSelectedPlan(key)}
               >
-                <div style={{ fontWeight: 700, marginBottom: 4, fontSize: 13 }}>
+                <div className="plan-card-label" style={{ fontWeight: 700, marginBottom: 4, fontSize: 13 }}>
                   {PLAN_LABELS[key]}
                 </div>
-                <div style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>
+                <div className="plan-card-desc" style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>
                   {PLAN_DESCRIPTIONS[key]}
                 </div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: isNeg ? '#c00' : '#1a7f37' }}>
+                <div className="plan-card-net" style={{ fontSize: 15, fontWeight: 700, color: isNeg ? '#c00' : '#1a7f37' }}>
                   {fmt(net.net_proceeds)}
                 </div>
                 {p.value_lift_capped > 0 && (
@@ -643,7 +757,7 @@ export default function ResultsStep({ sessionId }) {
         {/* ── Section 1: Required to sell ── */}
         {floorItems.length > 0 && (
           <div style={{ marginBottom: 24 }}>
-            <div style={sectionHeadStyle('#7c2d12', '#fef3c7', '⚠')}>
+            <div className="section-head" style={sectionHeadStyle('#7c2d12', '#fef3c7', '⚠')}>
               Required to sell<Tip id="requiredToSell" /> — {floorItems.length} item{floorItems.length !== 1 ? 's' : ''}
             </div>
             <p style={{ fontSize: 12, color: '#78350f', margin: '6px 0 10px' }}>
@@ -657,7 +771,7 @@ export default function ResultsStep({ sessionId }) {
                   <th style={th}>Component</th>
                   <th style={th}>Reason required</th>
                   <th style={th}>Rec. action</th>
-                  <th style={th} title="Click any cost to enter your real quote">Cost estimate ✎</th>
+                  <th style={th} className="num" title="Click any cost to enter your real quote">Cost estimate ✎</th>
                   <th style={th}>Condition</th>
                   <th style={th}>Note</th>
                 </tr>
@@ -668,7 +782,7 @@ export default function ResultsStep({ sessionId }) {
                     <td style={{ ...td, fontWeight: 600 }}>{item.display_name}</td>
                     <td style={{ ...td, fontSize: 11, color: '#92400e' }}>{item.floor_reason}</td>
                     <td style={{ ...td, fontWeight: 500 }}>{PATH_LABELS[item.better_value] || item.better_value}</td>
-                    <td style={td}>
+                    <td style={td} className="num">
                       <CostCell
                         item={item}
                         customCosts={customCosts}
@@ -759,7 +873,7 @@ export default function ResultsStep({ sessionId }) {
 
         {/* ── Section 2: Optional — increases value ── */}
         <div style={{ marginBottom: 20 }}>
-          <div style={sectionHeadStyle('#14532d', '#f0fdf4', '↑')}>
+          <div className="section-head" style={sectionHeadStyle('#14532d', '#f0fdf4', '↑')}>
             Optional — increases value<Tip id="optionalValue" />
             {discretionary.length > 0
               ? ` — ${discretionary.length} item${discretionary.length !== 1 ? 's' : ''} selected`
@@ -778,7 +892,7 @@ export default function ResultsStep({ sessionId }) {
                   <th style={th}>Component</th>
                   <th style={th}>Condition</th>
                   <th style={th}>Rec. action</th>
-                  <th style={th} title="Click any cost to enter your real quote">Cost estimate ✎</th>
+                  <th style={th} className="num" title="Click any cost to enter your real quote">Cost estimate ✎</th>
                   <th style={th}>Value return<Tip id="valueReturn" /></th>
                   <th style={th}>Note</th>
                 </tr>
@@ -795,7 +909,7 @@ export default function ResultsStep({ sessionId }) {
                     <td style={{ ...td, fontWeight: 500 }}>{item.display_name}</td>
                     <td style={{ ...td, fontSize: 11, color: '#555' }}>{item.condition_detected || '—'}</td>
                     <td style={td}>{PATH_LABELS[item.better_value] || item.better_value}</td>
-                    <td style={td}>
+                    <td style={td} className="num">
                       <CostCell
                         item={item}
                         customCosts={customCosts}
@@ -836,7 +950,7 @@ export default function ResultsStep({ sessionId }) {
                   <th style={th}>Component</th>
                   <th style={th}>Condition</th>
                   <th style={th}>Why not included</th>
-                  <th style={th} title="Click any cost to enter your real quote">Cost estimate ✎</th>
+                  <th style={th} className="num" title="Click any cost to enter your real quote">Cost estimate ✎</th>
                   <th style={th}>Value return</th>
                 </tr>
               </thead>
@@ -859,7 +973,7 @@ export default function ResultsStep({ sessionId }) {
                       {reason.startsWith('Below ROI') && <Tip id="belowROI" />}
                       {/inspect|get this checked/i.test(reason) && <Tip id="getChecked" />}
                     </td>
-                    <td style={td}>
+                    <td style={td} className="num">
                       <CostCell
                         item={item}
                         customCosts={customCosts}
@@ -883,7 +997,7 @@ export default function ResultsStep({ sessionId }) {
         {/* ── Upgrade / quick refresh items ── */}
         {upgradeItems.length > 0 && (
           <div style={{ marginBottom: 24 }}>
-            <div style={sectionHeadStyle('#065f46', '#d1fae5', '✦')}>
+            <div className="section-head" style={sectionHeadStyle('#065f46', '#d1fae5', '✦')}>
               Quick refresh — optional, often strong return ({upgradeItems.length})
             </div>
             <p style={{ fontSize: 12, color: '#555', marginTop: 0, marginBottom: 8 }}>
@@ -899,7 +1013,7 @@ export default function ResultsStep({ sessionId }) {
                 {upgradeItems.map((item, i) => (
                   <tr key={i}>
                     <td style={{ ...td, fontWeight: 500 }}>{item.display_name}</td>
-                    <td style={td}><CostCell item={item} customCosts={customCosts}
+                    <td style={td} className="num"><CostCell item={item} customCosts={customCosts}
                       editingCost={editingCost} setEditingCost={setEditingCost}
                       onCostSave={handleCostSave} /></td>
                     <td style={td}>{item.recoup_pct != null ? `${item.recoup_pct}%` : '—'}</td>
@@ -916,6 +1030,12 @@ export default function ResultsStep({ sessionId }) {
           </p>
         )}
       </section>
+
+      {/* ── Print footer (fixed, appears on every printed page) ── */}
+      <div className="print-footer" style={{ display: 'none' }}>
+        <span>{result.address || 'Pre-Listing Decision Report'}</span>
+        <span>Pre-Listing Decision Tool</span>
+      </div>
 
       {/* ── Adjust inputs ── */}
       <section className="no-print" style={sectionStyle}>
