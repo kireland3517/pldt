@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { getCompute, updateInputs, downloadPdf } from '../api'
+import { getCompute, updateInputs, downloadPdf, downloadLargePdf } from '../api'
 
 
 // ── Tooltip copy ─────────────────────────────────────────────────────────────
@@ -360,6 +360,26 @@ export default function ResultsStep({ sessionId }) {
     }
   }
 
+  const [largePdfLoading, setLargePdfLoading] = React.useState(false)
+  const [largePdfError,   setLargePdfError]   = React.useState(null)
+
+  async function handleDownloadLargePdf() {
+    setLargePdfLoading(true)
+    setLargePdfError(null)
+    try {
+      await downloadLargePdf(sessionId, {
+        planKey:     selectedPlan,
+        customItems: customItems,
+        customCosts: customCosts,
+        liveNet:     liveNet,
+      })
+    } catch (err) {
+      setLargePdfError(err.message)
+    } finally {
+      setLargePdfLoading(false)
+    }
+  }
+
   if (loading) return <p style={{ padding: 24 }}>Computing results…</p>
   if (error)   return <p style={{ color: 'red', padding: 24 }}>Error: {error}</p>
   if (!result) return null
@@ -447,9 +467,19 @@ export default function ResultsStep({ sessionId }) {
                      border: '1px solid #ccc', borderRadius: 3, background: '#f9f9f9' }}>
             {pdfLoading ? 'Generating PDF…' : 'Download PDF'}
           </button>
+          <button className="no-print" onClick={handleDownloadLargePdf} disabled={largePdfLoading}
+            style={{ fontSize: 11, padding: '3px 10px', cursor: largePdfLoading ? 'default' : 'pointer',
+                     border: '1px solid #ccc', borderRadius: 3, background: '#f9f9f9' }}>
+            {largePdfLoading ? 'Generating…' : 'Download large-print PDF'}
+          </button>
           {pdfError && (
             <span className="no-print" style={{ fontSize: 11, color: 'red', marginLeft: 8 }}>
               {pdfError}
+            </span>
+          )}
+          {largePdfError && (
+            <span className="no-print" style={{ fontSize: 11, color: 'red', marginLeft: 8 }}>
+              {largePdfError}
             </span>
           )}
         </div>
