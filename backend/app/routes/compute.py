@@ -41,7 +41,23 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
     Blindness: reads property_json and instance_json from session; never
     reads validation/.
     """
-    prop         = session["property_json"]
+    # Re-load market/reference data fresh from seed at compute time.
+    # This mirrors the qualify_floor_members re-derive pattern: comps,
+    # AVMs, active listings, county facts, and sales history are not
+    # session-specific. Reading them from the seed here means seed
+    # updates (new comps, active listings, history) apply to all
+    # existing sessions on next compute without recreating the session.
+    # Stored property_json is kept as a fallback for sessions that
+    # predate the property_key column.
+    property_key = session.get("property_key")
+    if property_key:
+        try:
+            prop = load_property_inputs(property_key)
+        except FileNotFoundError:
+            prop = session["property_json"]   # fallback: seed file moved/renamed
+    else:
+        prop = session["property_json"]       # legacy session without property_key
+
     instance     = session["instance_json"]
     listing_month = session.get("listing_month", 6)
     seller_inputs = session.get("seller_inputs") or {}
