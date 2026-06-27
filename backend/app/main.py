@@ -22,9 +22,12 @@ app = FastAPI(
     description="Turns pre-listing dollars into expected net-proceeds changes.",
 )
 
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "")
+_allow_origins = [o.strip().rstrip("/") for o in _raw_origins.split(",") if o.strip()] or ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(","),
+    allow_origins=_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
