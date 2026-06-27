@@ -68,6 +68,14 @@ export async function getCompute(sessionId, refresh = false) {
   return json(res)
 }
 
+export async function refetchMarketData(sessionId) {
+  const res = await fetch(`${BASE}/session/${sessionId}/refetch-market-data`, {
+    method: 'POST',
+  })
+  if (!res.ok) throw new Error((await json(res)).detail || res.statusText)
+  return json(res)
+}
+
 export async function updateInputs(sessionId, patch) {
   const res = await fetch(`${BASE}/session/${sessionId}/inputs`, {
     method: 'PATCH',
@@ -128,12 +136,4 @@ export async function downloadLargePdf(sessionId, { planKey, customItems, custom
     throw new Error(`Large-print PDF failed (${res.status}): ${msg.slice(0, 200)}`)
   }
   const blob = await res.blob()
-  const url  = URL.createObjectURL(blob)
-  const a    = document.createElement('a')
-  a.href     = url
-  a.download = `pldt-report-${sessionId.slice(0, 8)}-large-print.pdf`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-}
+  const url  = URL.cr

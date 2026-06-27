@@ -8,6 +8,7 @@ POST  /session/{id}/reverse         Reverse-goal: find plan that hits target net
 from __future__ import annotations
 
 import json
+import os
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -34,6 +35,42 @@ def _get_ref() -> ReferenceData:
     return _ref
 
 
+def _ensure_attom_fetched(session: dict, db, session_id: str) -> dict:
+    """
+    Fetch real market data from ATTOM once per session.
+    Caches result in property_json with attom_fetched=True flag.
+    Silently skips if ATTOM_API_KEY is not set or the API call fails,
+    so the seed data (or empty arrays) serve as the fallback.
+    """
+    prop = session.get("property_json") or {}
+    if prop.get("attom_fetched"):
+        return session  # already fetched for this session
+
+    if not os.environ.get("ATTOM_API_KEY"):
+        return session  # key not configured; use seed data
+
+    addr = prop.get("address", "")
+    if not addr:
+        return session
+
+    try:
+        from ..services.attom import fetch_attom_data, parse_address
+        street, city, state, zip_code = parse_address(addr)
+        subject_sqft = float(prop.get("public_county_facts", {}).get("sqft", 0))
+        attom_data   = fetch_attom_data(street, city, state, zip_code, subject_sqft)
+        updated_prop = {**prop, **attom_data, "attom_fetched": True}
+        # Clear compute_result alongside the property_json update so the
+        # next compute() call picks up real ATTOM data instead of serving
+        # the stale cached result.  No manual ?refresh=true needed.
+        db.table(TABLE).update({
+            "property_json":  updated_prop,
+            "compute_result": None,
+        }).eq("id", session_id).execute()
+        return {**session, "property_json": updated_prop, "compute_result": None}
+    except Exception:
+        return session  # ATTOM failed; fall through to seed data
+
+
 def _run_chain(session: dict, ref: ReferenceData) -> dict:
     """
     Execute the full logic chain for a session row.
@@ -41,22 +78,31 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
     Blindness: reads property_json and instance_json from session; never
     reads validation/.
     """
-    # Re-load market/reference data fresh from seed at compute time.
-    # This mirrors the qualify_floor_members re-derive pattern: comps,
-    # AVMs, active listings, county facts, and sales history are not
-    # session-specific. Reading them from the seed here means seed
-    # updates (new comps, active listings, history) apply to all
-    # existing sessions on next compute without recreating the session.
-    # Stored property_json is kept as a fallback for sessions that
-    # predate the property_key column.
+    # Re-load base property data fresh from seed at compute time so that
+    # seed updates (county facts, seller constraints, etc.) flow through
+    # to all existing sessions without recreating them.
     property_key = session.get("property_key")
     if property_key:
         try:
             prop = load_property_inputs(property_key)
         except FileNotFoundError:
-            prop = session["property_json"]   # fallback: seed file moved/renamed
+            prop = session.get("property_json") or {}
     else:
-        prop = session["property_json"]       # legacy session without property_key
+        prop = session.get("property_json") or {}
+
+    # Overlay ATTOM market data cached in session's property_json.
+    # _ensure_attom_fetched() stores real comps, AVMs, and history there
+    # on the first compute.  Subsequent computes read from cache.
+    session_prop = session.get("property_json") or {}
+    if session_prop.get("attom_fetched"):
+        prop = {
+            **prop,
+            "fetched_avms":               session_prop.get("fetched_avms") or {},
+            "fetched_comps":              session_prop.get("fetched_comps") or [],
+            "fetched_active_listings":    session_prop.get("fetched_active_listings") or [],
+            "neighborhood_sales_history": session_prop.get("neighborhood_sales_history") or [],
+            "attom_meta":                 session_prop.get("attom_meta") or {},
+        }
 
     instance     = session["instance_json"]
     listing_month = session.get("listing_month", 6)
@@ -70,7 +116,17 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
         raise HTTPException(status_code=422, detail="Session has no capture data. POST to /capture first.")
 
     # Valuation
-    val = compute_as_is_range(prop)
+    try:
+        val = compute_as_is_range(prop)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Valuation failed: {exc}. "
+                "No recent comparable sales were found — ATTOM market data "
+                "may not be available yet. Try again in a moment."
+            ),
+        )
 
     # Re-evaluate floor qualification at compute time.
     # defect_qualifies_floor was frozen into instance_json at capture time.
@@ -117,6 +173,7 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
         "plans":              plans,
         "active_listings":    prop.get("fetched_active_listings") or [],
         "sales_history_5yr":  prop.get("neighborhood_sales_history") or [],
+        "attom_meta":         prop.get("attom_meta") or {},
     }
 
 
@@ -134,9 +191,13 @@ def compute(session_id: str, refresh: bool = False):
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
 
     session = row.data
+    prop    = session.get("property_json") or {}
 
-    # Return cached result unless refresh requested or cache is empty
-    if session.get("compute_result") and not refresh:
+    # Serve cached result only when ATTOM data is already in this session.
+    # If attom_fetched is absent, skip the cache so _ensure_attom_fetched
+    # can run and replace stale/fake seed data on first compute.
+    attom_ready = bool(prop.get("attom_fetched"))
+    if session.get("compute_result") and not refresh and attom_ready:
         return {
             "session_id":      session_id,
             "address":         session.get("address", ""),
@@ -145,6 +206,10 @@ def compute(session_id: str, refresh: bool = False):
             "seller_inputs":   session.get("seller_inputs") or {},
             **session["compute_result"],
         }
+
+    # Fetch real ATTOM market data on first compute; clears cached result
+    # so this recompute always uses the fresh ATTOM data.
+    session = _ensure_attom_fetched(session, db, session_id)
 
     result = _run_chain(session, ref)
 
@@ -179,76 +244,4 @@ def update_inputs(session_id: str, body: InputsUpdate):
     """
     db = get_db()
 
-    row = db.table(TABLE).select(
-        "id, seller_inputs, commission_rate, has_hoa, listing_month"
-    ).eq("id", session_id).maybe_single().execute()
-    if not row.data:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
-
-    patch: dict = {"compute_result": None}   # always invalidate cache
-
-    if body.commission_rate is not None:
-        patch["commission_rate"] = body.commission_rate
-    if body.has_hoa is not None:
-        patch["has_hoa"] = body.has_hoa
-    if body.listing_month is not None:
-        patch["listing_month"] = body.listing_month
-    if body.seller_inputs is not None:
-        existing = row.data.get("seller_inputs") or {}
-        patch["seller_inputs"] = {**existing, **body.seller_inputs}
-
-    db.table(TABLE).update(patch).eq("id", session_id).execute()
-    return {"session_id": session_id, "updated": list(patch.keys())}
-
-
-class ReverseRequest(BaseModel):
-    target_net: float
-
-
-@router.post("/{session_id}/reverse")
-def reverse_goal(session_id: str, body: ReverseRequest):
-    """
-    Given a target net proceeds, find the cheapest plan that meets it.
-    Runs chain if not cached. Returns the matching plan or 'not achievable'.
-    """
-    db  = get_db()
-    ref = _get_ref()
-
-    row = db.table(TABLE).select("*").eq("id", session_id).maybe_single().execute()
-    if not row.data:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
-
-    session = row.data
-    result  = session.get("compute_result") or _run_chain(session, ref)
-    plans   = result["plans"]
-
-    # Walk from leaner -> recommended -> do_everything; pick first that beats target
-    for level in ("leaner", "recommended", "do_everything"):
-        p  = plans.get(level, {})
-        np = p.get("net_proceeds", {}).get("net_proceeds", 0)
-        if np >= body.target_net:
-            return {
-                "session_id":  session_id,
-                "target_net":  body.target_net,
-                "achievable":  True,
-                "plan":        level,
-                "net_proceeds": np,
-                "dom":         p.get("dom", {}).get("estimated_dom"),
-                "message":     f"'{level}' plan reaches ${np:,.0f} net, meeting your ${body.target_net:,.0f} target.",
-            }
-
-    # None of the plans hit target
-    best_plan  = plans.get("leaner", {})
-    best_net   = best_plan.get("net_proceeds", {}).get("net_proceeds", 0)
-    return {
-        "session_id":  session_id,
-        "target_net":  body.target_net,
-        "achievable":  False,
-        "plan":        None,
-        "net_proceeds": best_net,
-        "message":     (
-            f"Target ${body.target_net:,.0f} is not achievable with any plan. "
-            f"Best available is ${best_net:,.0f} (leaner plan). "
-            "Consider adjusting payoff, commission rate, or target."
-        ),
-    }
+    row = db.table(TABL

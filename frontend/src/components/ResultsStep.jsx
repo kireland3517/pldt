@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { getCompute, updateInputs, downloadPdf, downloadLargePdf } from '../api'
+import { getCompute, updateInputs, downloadPdf, downloadLargePdf, refetchMarketData } from '../api'
 
 
 // ── Tooltip copy ─────────────────────────────────────────────────────────────
@@ -264,8 +264,21 @@ export default function ResultsStep({ sessionId }) {
   const [customItems,     setCustomItems]     = useState(null)   // null = use plan defaults
   const [customCosts,     setCustomCosts]     = useState({})     // cid -> number
   const [editingCost,     setEditingCost]     = useState(null)   // cid | null
+  const [refetching,      setRefetching]      = useState(false)
 
   const payoffTotal = payoffPrimary + payoffSecondary + payoffOther
+
+  async function handleRefetchMarket() {
+    setRefetching(true)
+    try {
+      await refetchMarketData(sessionId)
+      await load(true)   // triggers recompute with fresh ATTOM data
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setRefetching(false)
+    }
+  }
 
   const load = useCallback(async (refresh = false) => {
     setLoading(true)
@@ -396,6 +409,7 @@ export default function ResultsStep({ sessionId }) {
   const repair         = result.repair_table || []
   const activeListings = result.active_listings   || []
   const salesHistory   = result.sales_history_5yr || []
+  const attomMeta      = result.attom_meta        || {}
   const planKeys = ['leaner', 'recommended', 'do_everything'].filter(k => plans[k])
 
   const isUnderwater = planKeys.length > 0 &&
@@ -508,6 +522,31 @@ export default function ResultsStep({ sessionId }) {
           {val.confidence && <Stat label="Confidence" value={`${(val.confidence * 100).toFixed(0)}%`} />}
         </div>
         {val.note && <p style={noteStyle}>{val.note}</p>}
+        {/* ── ATTOM data source line + refresh control ── */}
+        <div style={{ display:'flex', alignItems:'center', gap:12, marginTop:10, flexWrap:'wrap' }}>
+          {attomMeta.comp_count > 0 ? (
+            <span style={{ fontSize:12, color:'#6b7280' }}>
+              {attomMeta.comp_count} comp{attomMeta.comp_count !== 1 ? 's' : ''} from ATTOM
+              {attomMeta.comp_radius_miles ? ` within ${attomMeta.comp_radius_miles} mi` : ''}
+              {attomMeta.avm_as_of ? ` · AVM as of ${attomMeta.avm_as_of}` : ''}
+            </span>
+          ) : (
+            <span style={{ fontSize:12, color:'#9ca3af' }}>Market data from ATTOM</span>
+          )}
+          <button
+            onClick={handleRefetchMarket}
+            disabled={refetching}
+            style={{
+              fontSize:11, padding:'2px 8px', borderRadius:4,
+              border:'1px solid #d1d5db', background:'#f9fafb',
+              color:'#374151', cursor: refetching ? 'not-allowed' : 'pointer',
+              opacity: refetching ? 0.6 : 1,
+            }}
+          >
+            {refetching ? 'Refreshing…' : 'Refresh market data'}
+          </button>
+        </div>
+
         {val.comp_detail?.length > 0 && (
           <details style={{ marginTop: 12 }}>
             <summary style={detailsLink}>Comparable sales used in valuation</summary>
@@ -1111,39 +1150,4 @@ function sectionHeadStyle(color, bg, icon) {
 
 const sectionStyle  = { marginBottom: 24, padding: 16, border: '1px solid #ddd', borderRadius: 4 }
 const h3            = { fontSize: 14, marginTop: 0, marginBottom: 10 }
-const gridStyle     = { display: 'flex', gap: 24, flexWrap: 'wrap', justifyContent: 'flex-start', marginBottom: 8 }
-const tableStyle    = { borderCollapse: 'collapse', width: '100%', fontSize: 12, marginTop: 4 }
-const th            = { textAlign: 'left', padding: '4px 8px', borderBottom: '1px solid #ccc', fontWeight: 600, background: '#f9f9f9', whiteSpace: 'nowrap' }
-const td            = { padding: '4px 8px', borderBottom: '1px solid #eee', verticalAlign: 'top' }
-const labelStyle    = { display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 4 }
-const btnStyle      = { padding: '6px 18px', fontSize: 13, cursor: 'pointer' }
-const noteStyle     = { fontSize: 12, color: '#666', margin: '4px 0' }
-const caveatNote    = { fontSize: 11, color: '#999', margin: '4px 0' }
-const detailsLink   = { fontSize: 12, color: '#0066cc', cursor: 'pointer' }
-
-const tabStyle = (active) => ({
-  marginRight: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer',
-  border: active ? '1px solid #333' : '1px solid #ccc',
-  borderRadius: 3,
-  background: active ? '#333' : '#fff',
-  color: active ? '#fff' : '#333',
-})
-
-const planCardStyle = (selected) => ({
-  flex: '1 1 180px',
-  border: selected ? '2px solid #333' : '1px solid #ddd',
-  borderRadius: 4,
-  padding: 12,
-  background: selected ? '#fafafa' : '#fff',
-  cursor: 'pointer',
-})
-
-const liveNetBand = (delta, isCustomized) => ({
-  display: 'flex',
-  alignItems: 'center',
-  background: isCustomized ? '#eff6ff' : '#f9f9f9',
-  border: isCustomized ? '1px solid #bfdbfe' : '1px solid #e5e7eb',
-  borderRadius: 4,
-  padding: '5px 12px',
-  gap: 4,
-})
+cons
