@@ -43,6 +43,7 @@ function Tip({ id }) {
         onMouseLeave={() => setOpen(false)}
         onClick={toggle}
         onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && toggle(e)}
+        className="no-print"
         style={{
           cursor: 'help',
           marginLeft: 4,
@@ -292,6 +293,34 @@ export default function ResultsStep({ sessionId }) {
 
   useEffect(() => { load() }, [load])
 
+  // Inject print stylesheet on mount
+  useEffect(() => {
+    const style = document.createElement('style')
+    style.id = 'pldt-print-styles'
+    style.textContent = `
+      @media print {
+        .no-print { display: none !important; }
+        .print-only { display: block !important; }
+        @page { margin: 2cm; }
+        body { font-size: 10pt; }
+        details { display: block !important; }
+        details > summary { display: none !important; }
+        section { border: 1px solid #bbb !important; background: #fff !important;
+                  box-shadow: none !important; page-break-inside: avoid; }
+        table { width: 100% !important; border-collapse: collapse !important;
+                font-size: 9pt; page-break-inside: auto; }
+        thead { display: table-header-group; }
+        th { background: #f0f0f0 !important; color: #000 !important;
+             padding: 3pt 5pt !important; border: 1px solid #aaa !important; text-align: left; }
+        td { padding: 3pt 5pt !important; border: 1px solid #ddd !important; vertical-align: top; }
+        tr { page-break-inside: avoid; page-break-after: auto; }
+        input[type="checkbox"], input[type="range"], input[type="number"] { display: none !important; }
+      }
+    `
+    document.head.appendChild(style)
+    return () => document.getElementById('pldt-print-styles')?.remove()
+  }, [])
+
   // Reset custom items when plan tab changes
   useEffect(() => { setCustomItems(null) }, [selectedPlan])
 
@@ -336,6 +365,16 @@ export default function ResultsStep({ sessionId }) {
     } else if (rawVal === '' || rawVal === '0') {
       setCustomCosts(prev => { const next = { ...prev }; delete next[cid]; return next })
     }
+  }
+
+  function handlePrint() {
+    const allDetails = document.querySelectorAll('details')
+    const states = [...allDetails].map(d => d.open)
+    allDetails.forEach(d => { d.open = true })
+    window.addEventListener('afterprint', () => {
+      allDetails.forEach((d, i) => { d.open = states[i] })
+    }, { once: true })
+    window.print()
   }
 
   if (loading) return <p style={{ padding: 24 }}>Computing results…</p>
@@ -393,10 +432,40 @@ export default function ResultsStep({ sessionId }) {
 
   return (
     <div>
+      {/* ── Print-only header ── */}
+      <div className="print-only" style={{ display: 'none', marginBottom: 20, paddingBottom: 14, borderBottom: '2px solid #000' }}>
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 2 }}>
+          {result.address || 'Pre-Listing Decision Report'}
+        </div>
+        <div style={{ fontSize: 12, color: '#444', marginBottom: 10 }}>
+          {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+        </div>
+        <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', fontSize: 13, marginBottom: 10 }}>
+          <div><strong>As-is value (mid):</strong> {fmt(val.mid)}</div>
+          <div><strong>Plan:</strong> {PLAN_LABELS[selectedPlan]}</div>
+          <div><strong>Est. net proceeds:</strong> {fmt(selNet.net_proceeds)}</div>
+          <div><strong>Commission:</strong> {commission}%</div>
+          <div><strong>Mortgage payoff:</strong> {fmt(payoffTotal)}</div>
+        </div>
+        <div style={{ fontSize: 11, color: '#555', lineHeight: 1.6 }}>
+          This is a planning estimate, not an appraisal. All figures are based on available comparable
+          sales and regional cost data. Confirm exact payoff balances with your lender before making
+          decisions. Days-on-market is based on historical averages and will vary with market conditions.
+          Time-to-sell is listing to closing only and does not include construction time.
+        </div>
+      </div>
+
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     marginBottom: 4 }}>
-        <h2 style={{ fontSize: 16, margin: 0 }}>Report</h2>
-        <span style={{ fontSize: 11, color: '#aaa', fontFamily: 'monospace' }}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h2 style={{ fontSize: 16, margin: 0 }}>Report</h2>
+          <button className="no-print" onClick={handlePrint}
+            style={{ fontSize: 11, padding: '3px 10px', cursor: 'pointer',
+                     border: '1px solid #ccc', borderRadius: 3, background: '#f9f9f9' }}>
+            Print / Save as PDF
+          </button>
+        </div>
+        <span className="no-print" style={{ fontSize: 11, color: '#aaa', fontFamily: 'monospace' }}
               title='Copy this ID to resume the session later'>
           session: {sessionId}
         </span>
@@ -461,7 +530,7 @@ export default function ResultsStep({ sessionId }) {
       )}
 
       {/* ── Plan cards ── */}
-      <section style={sectionStyle}>
+      <section className="no-print" style={sectionStyle}>
         <h3 style={h3}>Plans — estimated net proceeds</h3>
         <p style={noteStyle}>
           Net proceeds = sale price − mandatory work − plan repairs − closing costs − payoff.
@@ -531,7 +600,7 @@ export default function ResultsStep({ sessionId }) {
       {/* ── Repair plan ── */}
       <section style={sectionStyle}>
         {/* Plan tabs + live net bar */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+        <div className="no-print" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
           <div>
             {planKeys.map(key => (
               <button key={key}
@@ -566,7 +635,7 @@ export default function ResultsStep({ sessionId }) {
           </div>
         </div>
 
-        <p style={{ fontSize: 11, color: '#888', marginTop: -8, marginBottom: 14 }}>
+        <p className="no-print" style={{ fontSize: 11, color: '#888', marginTop: -8, marginBottom: 14 }}>
           Check or uncheck items to build your own plan. Click any cost to enter a real quote.
           {(isCustomized || hasCustomCosts) && ' Live estimate is approximate — use "Apply and recompute" below for the exact number.'}
         </p>
@@ -720,6 +789,7 @@ export default function ResultsStep({ sessionId }) {
                     <td style={{ ...td, textAlign: 'center' }}>
                       <input type="checkbox" checked
                         onChange={() => toggleItem(item.component_id)}
+                        className="no-print"
                         style={{ cursor: 'pointer' }} />
                     </td>
                     <td style={{ ...td, fontWeight: 500 }}>{item.display_name}</td>
@@ -779,6 +849,7 @@ export default function ResultsStep({ sessionId }) {
                     <td style={{ ...td, textAlign: 'center' }}>
                       <input type="checkbox" checked={false}
                         onChange={() => toggleItem(item.component_id)}
+                        className="no-print"
                         style={{ cursor: 'pointer' }} />
                     </td>
                     <td style={td}>{item.display_name}</td>
@@ -847,7 +918,7 @@ export default function ResultsStep({ sessionId }) {
       </section>
 
       {/* ── Adjust inputs ── */}
-      <section style={sectionStyle}>
+      <section className="no-print" style={sectionStyle}>
         <h3 style={h3}>Adjust inputs</h3>
         <p style={noteStyle}>
           Changing these recalculates the exact net proceeds from the backend.

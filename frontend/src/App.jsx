@@ -179,13 +179,13 @@ export default function App() {
         <>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
             <h1 style={{ fontSize: 18, margin: 0 }}>Pre-Listing Decision Tool</h1>
-            <button onClick={() => { setStep('home'); syncUrl(null, 'home') }}
+            <button className="no-print" onClick={() => { setStep('home'); syncUrl(null, 'home') }}
               style={{ fontSize: 12, color: '#888', background: 'none', border: 'none',
                        cursor: 'pointer', textDecoration: 'underline' }}>
               ← All sessions
             </button>
           </div>
-          <nav style={{ marginBottom: 20, fontSize: 13, color: '#666' }}>
+          <nav className="no-print" style={{ marginBottom: 20, fontSize: 13, color: '#666' }}>
             {['photos', 'questionnaire', 'results'].map((s, i) => (
               <span key={s}>
                 <span style={{ fontWeight: s === step ? 700 : 400, color: s === step ? '#000' : '#aaa' }}>

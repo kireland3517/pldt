@@ -117,6 +117,7 @@ def compute(session_id: str, refresh: bool = False):
     if session.get("compute_result") and not refresh:
         return {
             "session_id":      session_id,
+            "address":         session.get("address", ""),
             "cached":          True,
             "commission_rate": session.get("commission_rate", 0.06),
             "seller_inputs":   session.get("seller_inputs") or {},
@@ -133,6 +134,7 @@ def compute(session_id: str, refresh: bool = False):
 
     return {
         "session_id":      session_id,
+        "address":         session.get("address", ""),
         "cached":          False,
         "commission_rate": session.get("commission_rate", 0.06),
         "seller_inputs":   session.get("seller_inputs") or {},
