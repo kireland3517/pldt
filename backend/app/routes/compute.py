@@ -28,11 +28,36 @@ router = APIRouter()
 
 _ref: ReferenceData | None = None
 
+_MARKET_DATA_KEYS = (
+    "fetched_avms",
+    "fetched_comps",
+    "fetched_active_listings",
+    "neighborhood_sales_history",
+)
+
+
 def _get_ref() -> ReferenceData:
     global _ref
     if _ref is None:
         _ref = ReferenceData()
     return _ref
+
+
+def _has_market_data(prop: dict) -> bool:
+    avms = prop.get("fetched_avms") or {}
+    comps = prop.get("fetched_comps") or []
+    return bool(avms) or len(comps) >= 2
+
+
+def _merge_market_data(seed_prop: dict, session_prop: dict) -> dict:
+    """Keep session market data when a seed reload is missing comps/AVMs."""
+    merged = {**seed_prop}
+    if _has_market_data(seed_prop) or not _has_market_data(session_prop):
+        return merged
+    for key in _MARKET_DATA_KEYS:
+        if not merged.get(key) and session_prop.get(key):
+            merged[key] = session_prop[key]
+    return merged
 
 
 def _ensure_attom_fetched(session: dict, db, session_id: str) -> dict:
@@ -91,10 +116,12 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
     else:
         prop = session.get("property_json") or {}
 
+    session_prop = session.get("property_json") or {}
+    prop = _merge_market_data(prop, session_prop)
+
     # Overlay ATTOM market data cached in session's property_json.
     # _ensure_attom_fetched() stores real comps, AVMs, and history there
     # on the first compute.  Subsequent computes read from cache.
-    session_prop = session.get("property_json") or {}
     if session_prop.get("attom_fetched"):
         prop = {
             **prop,
