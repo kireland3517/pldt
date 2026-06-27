@@ -244,4 +244,53 @@ def update_inputs(session_id: str, body: InputsUpdate):
     """
     db = get_db()
 
-    row = db.table(TABL
+    row = db.table(TABLE).select("*").eq("id", session_id).maybe_single().execute()
+    if not row.data:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+
+    session = row.data
+    patch: dict = {"compute_result": None}   # always invalidate cache on input change
+
+    if body.commission_rate is not None:
+        patch["commission_rate"] = body.commission_rate
+    if body.has_hoa is not None:
+        patch["has_hoa"] = body.has_hoa
+    if body.listing_month is not None:
+        patch["listing_month"] = body.listing_month
+    if body.seller_inputs is not None:
+        existing = session.get("seller_inputs") or {}
+        patch["seller_inputs"] = {**existing, **body.seller_inputs}
+
+    db.table(TABLE).update(patch).eq("id", session_id).execute()
+    return {"ok": True, "session_id": session_id}
+
+
+@router.post("/{session_id}/refetch-market-data")
+def refetch_market_data(session_id: str):
+    """
+    Clear cached ATTOM data so the next compute() call re-fetches fresh
+    market data from ATTOM.  Never touches instance_json (tags/conditions).
+    """
+    db = get_db()
+
+    row = db.table(TABLE).select("*").eq("id", session_id).maybe_single().execute()
+    if not row.data:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+
+    prop = row.data.get("property_json") or {}
+    attom_keys = {
+        "attom_fetched", "fetched_avms", "fetched_comps",
+        "fetched_active_listings", "neighborhood_sales_history", "attom_meta",
+    }
+    cleaned_prop = {k: v for k, v in prop.items() if k not in attom_keys}
+
+    db.table(TABLE).update({
+        "property_json":  cleaned_prop,
+        "compute_result": None,
+    }).eq("id", session_id).execute()
+
+    return {
+        "ok":        True,
+        "session_id": session_id,
+        "message":   "Market data cleared. Re-run compute to fetch fresh ATTOM data.",
+    }
