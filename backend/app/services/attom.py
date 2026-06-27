@@ -30,8 +30,9 @@ import urllib.request
 from datetime import date, timedelta
 
 BASE     = "https://api.gateway.attomdata.com"
-MIN_COMP_COUNT = 4            # minimum comps before stepping out to next radius
-RADII    = [0.5, 0.75, 1.0]  # step through these until MIN_COMP_COUNT is met
+MIN_COMP_COUNT = 3            # minimum comps; widen radius before aging comps
+RADII    = [1.0, 2.0, 3.0, 5.0]        # step through these until MIN_COMP_COUNT is met
+CONF_RADIUS = 2.0                        # comps beyond this mile get flagged lower-confidence
 
 
 def _get(path: str, params: str = "") -> dict:
@@ -175,14 +176,14 @@ def fetch_attom_data(
     cutoff_12mo = (date.today() - timedelta(days=365)).isoformat()
     cutoff_5yr  = (date.today() - timedelta(days=1825)).isoformat()
 
-    # Fetch up to 50 closest SFR properties within 1.0 mile (our max radius).
-    # Properties are sorted by distance, so pages 1-5 give the closest 50.
+    # Fetch up to 100 closest SFR properties within 2.0 miles (our max radius).
+    # Properties are sorted by distance, so pages 1-10 give the closest 100.
     nearby: list[dict] = []
-    for page in range(1, 6):
+    for page in range(1, 16):
         try:
             resp  = _get(
                 "/propertyapi/v1.0.0/property/basicprofile",
-                f"{p_base}&radius=1.0&page={page}&pageSize=10",
+                f"{p_base}&radius=5.0&page={page}&pageSize=10",
             )
             batch = resp.get("property", [])
             if not batch:
@@ -228,11 +229,18 @@ def fetch_attom_data(
             and _in_size_band(e["sqft"], subject_sqft, 0.40)
         ]
 
+    # Flag comps beyond CONF_RADIUS as lower-confidence
+    for e in final_comps:
+        if e["_distance_mi"] > CONF_RADIUS:
+            e["note"] = ((e.get("note") or "") + "; extended radius").lstrip("; ")
+
     # ── Neighborhood history (5-year, looser size band, full 1.0 mi) ─────
+    comp_addresses = {e["address"] for e in final_comps}
     history: list[dict] = [
         e for e in candidates
         if e["_sale_date_iso"] >= cutoff_5yr
         and _in_size_band(e["sqft"], subject_sqft, 0.60)
+        and e["address"] not in comp_addresses
     ]
 
     # Sort newest first; strip internal tracking fields; cap counts
