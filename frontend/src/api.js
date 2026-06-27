@@ -136,4 +136,12 @@ export async function downloadLargePdf(sessionId, { planKey, customItems, custom
     throw new Error(`Large-print PDF failed (${res.status}): ${msg.slice(0, 200)}`)
   }
   const blob = await res.blob()
-  const url  = URL.cr
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href     = url
+  a.download = `pldt-report-large-${sessionId.slice(0, 8)}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
