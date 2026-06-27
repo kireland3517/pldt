@@ -21,6 +21,7 @@ from ..logic.recoup import attach_recoup
 from ..logic.floor import compute_floor
 from ..logic.dom import estimate_dom, estimate_carrying_cost
 from ..logic.optimizer import build_plans
+from ..logic.capture import qualify_floor_members
 
 router = APIRouter()
 
@@ -54,6 +55,14 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
 
     # Valuation
     val = compute_as_is_range(prop)
+
+    # Re-evaluate floor qualification at compute time.
+    # defect_qualifies_floor was frozen into instance_json at capture time.
+    # Re-running qualify_floor_members here makes capture.py logic fixes
+    # (keyword expansion, severity fallback) apply to all sessions, including
+    # those captured before the fix was deployed. This is a read-and-derive
+    # step: it does not mutate the DB row, only the local instance dict.
+    instance = qualify_floor_members(instance, ref)
 
     # Condition list
     cond_list = build_condition_list(instance, ref, has_inspection=False)
