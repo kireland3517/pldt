@@ -272,6 +272,12 @@ export default function ResultsStep({ sessionId }) {
     setError(null)
     try {
       const r = await getCompute(sessionId, refresh)
+      // Auto-refresh if cached result is missing fields added after the
+      // session was last computed (e.g. active_listings, sales_history_5yr).
+      // Triggers once: after refresh the field exists (possibly []) and stops.
+      if (!refresh && r.active_listings === undefined) {
+        return load(true)
+      }
       setResult(r)
       if (!refresh) {
         if (r.commission_rate) setCommission(Math.round(r.commission_rate * 100 * 10) / 10)
