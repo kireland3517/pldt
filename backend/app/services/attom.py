@@ -213,7 +213,7 @@ def fetch_attom_data(
             e for e in candidates
             if e["_sale_date_iso"] >= cutoff_12mo
             and e["_distance_mi"] <= radius
-            and _in_size_band(e["sqft"], subject_sqft, 0.20)
+            and _in_size_band(e["sqft"], subject_sqft, 0.40)
         ]
         if len(bucket) >= MIN_COMP_COUNT:
             used_radius = radius
@@ -226,7 +226,7 @@ def fetch_attom_data(
         final_comps = [
             e for e in candidates
             if e["_sale_date_iso"] >= cutoff_12mo
-            and _in_size_band(e["sqft"], subject_sqft, 0.20)
+            and _in_size_band(e["sqft"], subject_sqft, 0.40)
         ]
 
     # Flag comps beyond CONF_RADIUS as lower-confidence
