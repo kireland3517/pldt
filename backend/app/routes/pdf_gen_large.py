@@ -1,18 +1,17 @@
 """
-pdf_gen_large.py — Large-print PDF variant of the pre-listing report.
+pdf_gen_large.py — 18 pt large-print variant of the pre-listing report.
 
-Design rules
-============
-* Body text 24 pt, item names 28 pt bold, section heads 32 pt bold.
-  All text is genuinely large-print, not just the normal report scaled up.
-* Multi-column tables are replaced by stacked blocks: one repair item per
-  block, label:value pairs stacked vertically. Wide tables don't survive at
-  this font size without truncation.
-* Net-proceeds breakdown stays as a simple two-column list (label | amount)
-  because it has only two columns and works fine at large size.
-* Expect more pages. That is correct behavior for large print.
-* Colors match the normal report (same hex palette from ResultsStep.jsx).
-* Generous margins and line-spacing; one idea per visual area.
+Layout is the same financial-table structure as the normal report.
+Changes from the standard PDF:
+  * Body / cell text: 18 pt (vs 8.5 pt)
+  * Headings proportionally larger (section 24 pt, sub-section 20 pt)
+  * Leading ~1.45× font size throughout
+  * Cell padding 6 pt top/bottom (vs 3 pt)
+  * Notes column in repair tables widened to give wrapped text more room
+  * All cell content wrapped in Paragraph objects — wraps at col boundary,
+    never overflows
+  * Same color palette as normal report
+  * Same page size and margins (0.75 in) — more pages, that's expected
 """
 
 from __future__ import annotations
@@ -37,7 +36,6 @@ from reportlab.platypus import (
     Spacer,
     Table,
     TableStyle,
-    KeepTogether,
 )
 
 from ..db import get_db, TABLE
@@ -45,91 +43,124 @@ from ..db import get_db, TABLE
 # ── Page geometry ─────────────────────────────────────────────────────────────
 
 PAGE_W, PAGE_H = letter
-MARGIN    = 1.0 * inch        # generous margins for large print
-CONTENT_W = PAGE_W - 2 * MARGIN   # 6.5 inches
+MARGIN    = 0.75 * inch
+CONTENT_W = PAGE_W - 2 * MARGIN      # 7.0 inches
 
-# ── Type scale ────────────────────────────────────────────────────────────────
+# ── Fonts ────────────────────────────────────────────────────────────────────
 
 F   = "Helvetica"
 FB  = "Helvetica-Bold"
 FI  = "Helvetica-Oblique"
 FBI = "Helvetica-BoldOblique"
 
-SZ_TITLE   = 36
-SZ_SECTION = 32
-SZ_ITEM    = 28
-SZ_BODY    = 24
-SZ_LABEL   = 22    # field labels within stacked blocks
-SZ_MUTED   = 18
-SZ_CAVEAT  = 16
-
-LEAD_TITLE   = 44
-LEAD_SECTION = 40
-LEAD_ITEM    = 36
-LEAD_BODY    = 32
-LEAD_LABEL   = 28
-LEAD_MUTED   = 24
-LEAD_CAVEAT  = 21
-
-# ── Color palette (hex values from ResultsStep.jsx) ───────────────────────────
+# ── Colors (hex values from ResultsStep.jsx) ─────────────────────────────────
 
 C_BLACK      = colors.HexColor("#000000")
 C_WHITE      = colors.white
 C_RULE       = colors.HexColor("#cccccc")
-C_REQ        = colors.HexColor("#7c2d12")   # Required-to-sell headings
-C_REQ_REASON = colors.HexColor("#92400e")   # floor reason text
-C_OPT        = colors.HexColor("#14532d")   # Optional improvements
-C_REFRESH    = colors.HexColor("#065f46")   # Quick refresh
-C_GREEN      = colors.HexColor("#1a7f37")   # positive net / value return
-C_RED        = colors.HexColor("#cc0000")   # negative net
+C_REQ        = colors.HexColor("#7c2d12")
+C_REQ_REASON = colors.HexColor("#92400e")
+C_OPT        = colors.HexColor("#14532d")
+C_REFRESH    = colors.HexColor("#065f46")
+C_GREEN      = colors.HexColor("#1a7f37")
+C_RED        = colors.HexColor("#cc0000")
 C_MUTED      = colors.HexColor("#555555")
 C_GRAY       = colors.HexColor("#888888")
 C_CAVEAT_CLR = colors.HexColor("#999999")
 
-# ── Style factory ─────────────────────────────────────────────────────────────
+# ── Document-level paragraph styles ──────────────────────────────────────────
 
-def _ps(name, size, lead, font=F, color=C_BLACK, align=TA_LEFT,
-        before=0, after=0) -> ParagraphStyle:
-    return ParagraphStyle(
-        name, fontName=font, fontSize=size, leading=lead,
-        textColor=color, alignment=align,
-        spaceBefore=before, spaceAfter=after,
-    )
+def _ps(name, **kw) -> ParagraphStyle:
+    base = dict(fontName=F, fontSize=12, leading=17, textColor=C_BLACK,
+                spaceBefore=0, spaceAfter=0)
+    base.update(kw)
+    return ParagraphStyle(name, **base)
 
-S_TOOL    = _ps("lp_tool",    10, 14, color=C_GRAY,     after=4)
-S_ADDR    = _ps("lp_addr",    SZ_TITLE,   LEAD_TITLE,   font=FB, after=6)
-S_SUMMARY = _ps("lp_summary", SZ_BODY,    LEAD_BODY,    after=4)
-S_CUSTOM  = _ps("lp_custom",  SZ_MUTED,   LEAD_MUTED,   font=FI, color=C_MUTED, after=4)
-S_SECTION = _ps("lp_section", SZ_SECTION, LEAD_SECTION, font=FB, before=20, after=8)
-S_SUBHEAD = _ps("lp_subhead", SZ_ITEM,    LEAD_ITEM,    font=FB, before=18, after=6)
+S = {
+    "tool":    _ps("lp_tool",   fontSize=9,  leading=13, textColor=C_GRAY,     spaceAfter=2),
+    "address": _ps("lp_addr",   fontSize=24, leading=30, fontName=FB,           spaceAfter=6),
+    "summary": _ps("lp_sum",    fontSize=14, leading=20),
+    "custom":  _ps("lp_cust",   fontSize=13, leading=18, fontName=FI, textColor=C_MUTED, spaceAfter=2),
+    "sec":     _ps("lp_sec",    fontSize=24, leading=30, fontName=FB, spaceBefore=18, spaceAfter=6),
+    "subsec":  _ps("lp_sub",    fontSize=20, leading=26, fontName=FB, spaceBefore=14, spaceAfter=4),
+    "body":    _ps("lp_body",   fontSize=16, leading=22, spaceAfter=3),
+    "muted":   _ps("lp_muted",  fontSize=14, leading=20, textColor=C_MUTED,    spaceAfter=3),
+    "caveat":  _ps("lp_cav",    fontSize=13, leading=18, fontName=FI, textColor=C_CAVEAT_CLR, spaceAfter=3),
+}
 
-# Section color variants
-def _colored_subhead(color) -> ParagraphStyle:
-    return _ps("lp_sh_" + str(id(color)), SZ_ITEM, LEAD_ITEM, font=FB,
-               color=color, before=18, after=6)
+# ── Table-cell paragraph styles (18 pt body) ──────────────────────────────────
 
-S_REQ_HEAD     = _colored_subhead(C_REQ)
-S_OPT_HEAD     = _colored_subhead(C_OPT)
-S_REFRESH_HEAD = _colored_subhead(C_REFRESH)
-S_MUTED_HEAD   = _colored_subhead(C_MUTED)
+def _cs(name, **kw) -> ParagraphStyle:
+    base = dict(fontName=F, fontSize=18, leading=24, textColor=C_BLACK)
+    base.update(kw)
+    return ParagraphStyle(name, **base)
 
-S_ITEM_NAME  = _ps("lp_iname",  SZ_ITEM,    LEAD_ITEM,    font=FB, after=4)
-S_BODY       = _ps("lp_body",   SZ_BODY,    LEAD_BODY,    after=4)
-S_LABEL      = _ps("lp_label",  SZ_LABEL,   LEAD_LABEL,   font=FB, color=C_MUTED)
-S_VALUE      = _ps("lp_value",  SZ_BODY,    LEAD_BODY)
-S_VALUE_R    = _ps("lp_valr",   SZ_BODY,    LEAD_BODY,    align=TA_RIGHT)
-S_MUTED      = _ps("lp_muted",  SZ_MUTED,   LEAD_MUTED,   color=C_MUTED, after=4)
-S_CAVEAT     = _ps("lp_caveat", SZ_CAVEAT,  LEAD_CAVEAT,  font=FI, color=C_CAVEAT_CLR, after=4)
-S_GREEN      = _ps("lp_green",  SZ_BODY,    LEAD_BODY,    color=C_GREEN)
-S_GREEN_R    = _ps("lp_greenr", SZ_BODY,    LEAD_BODY,    color=C_GREEN, align=TA_RIGHT)
-S_GREEN_RB   = _ps("lp_greenrb",SZ_BODY,    LEAD_BODY,    font=FB, color=C_GREEN, align=TA_RIGHT)
-S_RED_R      = _ps("lp_redr",   SZ_BODY,    LEAD_BODY,    color=C_RED,   align=TA_RIGHT)
-S_RED_RB     = _ps("lp_redrb",  SZ_BODY,    LEAD_BODY,    font=FB, color=C_RED,   align=TA_RIGHT)
-S_NEUTRAL_R  = _ps("lp_neutr",  SZ_BODY,    LEAD_BODY,    align=TA_RIGHT)
-S_NEUTRAL_RB = _ps("lp_neutrb", SZ_BODY,    LEAD_BODY,    font=FB, align=TA_RIGHT)
-S_REASON     = _ps("lp_rsn",    SZ_BODY,    LEAD_BODY,    color=C_REQ_REASON)
-S_VRET       = _ps("lp_vret",   SZ_BODY,    LEAD_BODY,    color=C_GREEN)
-S_GRAY       = _ps("lp_gray",   SZ_BODY,    LEAD_BODY,    color=C_GRAY)
+CS = {
+    "n":    _cs("lcn"),
+    "b":    _cs("lcb",   fontName=FB),
+    "r":    _cs("lcr",   alignment=TA_RIGHT),
+    "rb":   _cs("lcrb",  fontName=FB, alignment=TA_RIGHT),
+    "sm":   _cs("lcsm",  fontSize=15, leading=20),          # notes column
+    "mu":   _cs("lcmu",  textColor=C_MUTED),
+    "rmu":  _cs("lcrmu", textColor=C_MUTED, alignment=TA_RIGHT),
+    "req":  _cs("lcreq", fontName=FB, textColor=C_REQ),
+    "rsn":  _cs("lcrsn", textColor=C_REQ_REASON),
+    "opt":  _cs("lcopt", fontName=FB, textColor=C_OPT),
+    "grn":  _cs("lcgrn", textColor=C_GREEN,  alignment=TA_RIGHT),
+    "grnb": _cs("lcgb",  fontName=FB, textColor=C_GREEN, alignment=TA_RIGHT),
+    "red":  _cs("lcred", textColor=C_RED,    alignment=TA_RIGHT),
+    "redb": _cs("lcrdb", fontName=FB, textColor=C_RED,   alignment=TA_RIGHT),
+    "vret": _cs("lcvr",  textColor=C_GREEN),
+    "gry":  _cs("lcgry", textColor=C_GRAY),
+}
+
+# ── Cell helpers ──────────────────────────────────────────────────────────────
+
+def _p(text, style="n") -> Paragraph:
+    txt = str(text).strip() if text else "—"
+    return Paragraph(txt, CS[style])
+
+def _amt(value, bold=False) -> Paragraph:
+    try:
+        v   = float(value)
+        txt = f"${v:,.0f}"
+        return Paragraph(txt, CS["redb" if bold else "red"] if v < 0
+                         else CS["grnb" if bold else "grn"])
+    except (TypeError, ValueError):
+        return _p("—", "r")
+
+def _neutral_amt(value, bold=False) -> Paragraph:
+    try:
+        v = float(value)
+        return Paragraph(f"${v:,.0f}", CS["rb" if bold else "r"])
+    except (TypeError, ValueError):
+        return _p("—", "r")
+
+# ── Table style ───────────────────────────────────────────────────────────────
+
+def _tbl(n: int, bold_last=False) -> TableStyle:
+    cmds = [
+        ("FONTNAME",      (0, 0), (-1, 0),   FB),
+        ("FONTSIZE",      (0, 0), (-1, -1),  18),
+        ("FONTNAME",      (0, 1), (-1, -1),  F),
+        ("VALIGN",        (0, 0), (-1, -1),  "TOP"),
+        ("TOPPADDING",    (0, 0), (-1, -1),  6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1),  6),
+        ("LEFTPADDING",   (0, 0), (-1, -1),  5),
+        ("RIGHTPADDING",  (0, 0), (-1, -1),  5),
+        ("LINEBELOW",     (0, 0), (-1, 0),   0.75, C_BLACK),
+        ("LINEBELOW",     (0, -1), (-1, -1), 0.75, C_BLACK),
+        ("BACKGROUND",    (0, 0), (-1, -1),  C_WHITE),
+        ("ROWBACKGROUNDS",(0, 0), (-1, -1),  [C_WHITE]),
+    ]
+    for r in range(1, n - 1):
+        cmds.append(("LINEBELOW", (0, r), (-1, r), 0.25, C_RULE))
+    if bold_last:
+        cmds += [
+            ("FONTNAME",  (0, -1), (-1, -1), FB),
+            ("LINEABOVE", (0, -1), (-1, -1), 0.75, C_BLACK),
+        ]
+    return TableStyle(cmds)
 
 # ── Currency helpers ──────────────────────────────────────────────────────────
 
@@ -148,24 +179,14 @@ def _cost_range(item) -> str:
         return _fmt_range(item.get("replace_low"), item.get("replace_high"))
     return _fmt_range(item.get("repair_low"), item.get("repair_high"))
 
-def _amt_para(value, bold=False) -> Paragraph:
-    try:
-        v = float(value)
-        txt = f"${v:,.0f}"
-        if v < 0:
-            return Paragraph(txt, S_RED_RB if bold else S_RED_R)
-        return Paragraph(txt, S_GREEN_RB if bold else S_GREEN_R)
-    except (TypeError, ValueError):
-        return Paragraph("—", S_NEUTRAL_R)
+def _recoup_cell(item) -> Paragraph:
+    label = item.get("effective_recoup_label")
+    if not label:
+        r = item.get("recoup_pct")
+        label = f"{r:.0f}%" if r is not None else "—"
+    return _p(label, "vret" if "enables sale" in label else "n")
 
-def _neutral_amt(value, bold=False) -> Paragraph:
-    try:
-        v = float(value)
-        return Paragraph(f"${v:,.0f}", S_NEUTRAL_RB if bold else S_NEUTRAL_R)
-    except:
-        return Paragraph("—", S_NEUTRAL_R)
-
-# ── Domain lookups ────────────────────────────────────────────────────────────
+# ── Domain labels ─────────────────────────────────────────────────────────────
 
 PLAN_LABELS = {"leaner": "Leaner", "recommended": "Recommended", "do_everything": "Do Everything"}
 PLAN_DESCS  = {
@@ -182,18 +203,12 @@ def _skip_reason(item, plan_key) -> str:
     if item.get("better_value") == "leave":  return "Good condition — no action needed"
     if item.get("recent_replacement"):        return "Recently replaced — no action needed"
     if not item.get("condition_detected"):    return "No defect detected"
-    if plan_key == "leaner":                  return "Leaner plan: required-to-sell items only"
+    if plan_key == "leaner":                  return "Leaner plan: required-to-sell only"
     r = item.get("recoup_pct")
-    if r is not None and r < 75:              return f"Below ROI threshold ({r:.0f}% returns at sale)"
+    if r is not None and r < 75:              return f"Below ROI threshold — {r:.0f}% returns at sale"
     return "Below ROI threshold for this plan"
 
-def _recoup_text(item) -> str:
-    lbl = item.get("effective_recoup_label")
-    if lbl: return lbl
-    r = item.get("recoup_pct")
-    return f"{r:.0f}%" if r is not None else "—"
-
-# ── Repair plan splitter (mirrors frontend logic) ─────────────────────────────
+# ── Repair-plan splitter ──────────────────────────────────────────────────────
 
 def _split(repair_table, floor_result, effective_ids):
     floor_ids  = set(i["component_id"] for i in (floor_result.get("items") or []))
@@ -223,11 +238,11 @@ def _footer(address: str):
         canvas.saveState()
         canvas.setStrokeColor(C_RULE)
         canvas.setLineWidth(0.5)
-        canvas.line(MARGIN, 0.6 * inch, PAGE_W - MARGIN, 0.6 * inch)
-        canvas.setFont(F, 12)
+        canvas.line(MARGIN, 0.55 * inch, PAGE_W - MARGIN, 0.55 * inch)
+        canvas.setFont(F, 9)
         canvas.setFillColor(C_CAVEAT_CLR)
-        canvas.drawString(MARGIN, 0.38 * inch, address or "Pre-Listing Decision Report — Large Print")
-        canvas.drawRightString(PAGE_W - MARGIN, 0.38 * inch, f"Page {doc.page}")
+        canvas.drawString(MARGIN, 0.35 * inch, address or "Pre-Listing Decision Report")
+        canvas.drawRightString(PAGE_W - MARGIN, 0.35 * inch, f"Page {doc.page}")
         canvas.restoreState()
     return draw
 
@@ -235,45 +250,20 @@ def _footer(address: str):
 
 def _section(title: str) -> list:
     return [
-        Paragraph(title, S_SECTION),
-        HRFlowable(width=CONTENT_W, thickness=1.0, color=C_BLACK, spaceAfter=10),
+        Paragraph(title, S["sec"]),
+        HRFlowable(width=CONTENT_W, thickness=0.75, color=C_BLACK, spaceAfter=10),
     ]
 
-def _lv_table(rows: list, label_w=1.7*inch) -> Table:
-    """
-    Two-column label:value table for stacked item blocks and net-proceeds list.
-    rows = [(label_str, value_para_or_str), ...]
-    """
-    tbl_data = []
-    for lbl, val in rows:
-        lbl_para = Paragraph(lbl, S_LABEL)
-        val_para = val if isinstance(val, Paragraph) else Paragraph(str(val), S_VALUE)
-        tbl_data.append([lbl_para, val_para])
-
-    tbl = Table(tbl_data, colWidths=[label_w, CONTENT_W - label_w])
-    tbl.setStyle(TableStyle([
-        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
-        ("BACKGROUND",    (0, 0), (-1, -1), C_WHITE),
-    ]))
-    return tbl
-
-def _item_block(name: str, rows: list, name_style=None) -> list:
-    """
-    One stacked block: bold item name, thin rule, label:value rows, spacer.
-    Kept together so a block doesn't split across pages mid-item.
-    """
-    ns = name_style or S_ITEM_NAME
-    block = [
-        Paragraph(name, ns),
-        HRFlowable(width=CONTENT_W, thickness=0.5, color=C_RULE, spaceAfter=6),
-        _lv_table(rows),
-        Spacer(1, 20),
+def _subsection(title: str, color=C_BLACK, note: str = "") -> list:
+    out = [
+        Paragraph(title, _ps("lp_sh_dyn", fontSize=20, leading=26,
+                              fontName=FB, spaceBefore=14, spaceAfter=4,
+                              textColor=color)),
+        HRFlowable(width=CONTENT_W, thickness=0.5, color=color, spaceAfter=6),
     ]
-    return [KeepTogether(block)]
+    if note:
+        out.append(Paragraph(note, S["muted"]))
+    return out
 
 # ── Main generator ────────────────────────────────────────────────────────────
 
@@ -318,12 +308,11 @@ def generate_large_pdf(
     plan_desc  = PLAN_DESCS.get(plan_key, "")
     today_str  = date.today().strftime("%B %-d, %Y")
 
-    # ── Document setup ────────────────────────────────────────────────────
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=letter,
         leftMargin=MARGIN, rightMargin=MARGIN,
-        topMargin=MARGIN, bottomMargin=MARGIN + 0.5 * inch,
+        topMargin=MARGIN, bottomMargin=MARGIN + 0.45 * inch,
         title=f"Pre-Listing Report (Large Print) — {address}",
         author="Pre-Listing Decision Tool",
     )
@@ -333,52 +322,47 @@ def generate_large_pdf(
     # ════════════════════════════════════════════════════════════════════════
     # Title block
     # ════════════════════════════════════════════════════════════════════════
-    story.append(Paragraph("PRE-LISTING DECISION TOOL — LARGE PRINT", S_TOOL))
-    story.append(Spacer(1, 4))
-    story.append(Paragraph(address, S_ADDR))
-    story.append(HRFlowable(width=CONTENT_W, thickness=1.5, color=C_BLACK, spaceAfter=10))
-
-    story.append(_lv_table([
-        ("Date",     Paragraph(today_str, S_VALUE)),
-        ("Plan",     Paragraph(f"{plan_label} — {plan_desc}", S_VALUE)),
-        ("As-Is Mid",Paragraph(_fmt(val.get("mid")), S_VALUE)),
-        ("Est. Net", _amt_para(display_net, bold=True)),
-    ], label_w=1.9*inch))
-
+    story.append(Paragraph("PRE-LISTING DECISION TOOL — LARGE PRINT", S["tool"]))
+    story.append(Paragraph(address, S["address"]))
+    story.append(HRFlowable(width=CONTENT_W, thickness=1.5, color=C_BLACK, spaceAfter=8))
+    story.append(Paragraph(
+        f"Date: {today_str}  |  "
+        f"As-is value (mid): {_fmt(val.get('mid'))}  |  "
+        f"Plan: {plan_label}  |  "
+        f"Est. net: {_fmt(display_net)}",
+        S["summary"],
+    ))
     if is_customized:
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 4))
         story.append(Paragraph(
-            "Net reflects custom adjustments (items toggled / quotes entered).", S_CUSTOM
+            "Net reflects custom adjustments (items toggled / quotes entered).", S["custom"]
         ))
-    story.append(Spacer(1, 28))
+    story.append(Spacer(1, 20))
 
     # ════════════════════════════════════════════════════════════════════════
-    # Plans comparison — stacked cards (no table)
+    # Plans comparison
     # ════════════════════════════════════════════════════════════════════════
     story += _section("Plans — Estimated Net Proceeds")
 
+    plan_rows = [[_p("Plan", "b"), _p("Description", "b"), _p("Est. Net Proceeds", "rb")]]
     for key, lbl in PLAN_LABELS.items():
-        p  = plans.get(key)
-        if not p: continue
+        p = plans.get(key)
+        if not p:
+            continue
         nv  = p.get("net_proceeds", {}).get("net_proceeds")
         sel = key == plan_key
-        # card: plan name | net | description
-        card_name = (f"► {lbl}" if sel else lbl)
-        card_rows = [
-            ("Plan",        Paragraph(card_name, S_VALUE)),
-            ("Net Proceeds",_amt_para(nv, bold=True)),
-            ("Description", Paragraph(PLAN_DESCS.get(key, ""), S_VALUE)),
-        ]
-        block = [
-            HRFlowable(width=CONTENT_W, thickness=0.5,
-                       color=C_BLACK if sel else C_RULE, spaceAfter=6),
-            _lv_table(card_rows, label_w=2.1*inch),
-            Spacer(1, 14),
-        ]
-        story += [KeepTogether(block)]
+        plan_rows.append([
+            _p(f"► {lbl}" if sel else lbl, "b" if sel else "n"),
+            _p(PLAN_DESCS.get(key, ""), "n"),
+            _amt(nv, bold=sel),
+        ])
 
-    story.append(Paragraph("► = currently selected plan.", S_MUTED))
-    story.append(Spacer(1, 28))
+    plan_tbl = Table(plan_rows, colWidths=[1.3*inch, 3.8*inch, 1.9*inch], repeatRows=1)
+    plan_tbl.setStyle(_tbl(len(plan_rows)))
+    story.append(plan_tbl)
+    story.append(Spacer(1, 6))
+    story.append(Paragraph("► = currently selected plan.", S["muted"]))
+    story.append(Spacer(1, 22))
 
     # ════════════════════════════════════════════════════════════════════════
     # As-Is Value
@@ -386,199 +370,208 @@ def generate_large_pdf(
     story += _section("As-Is Value Estimate")
 
     conf_str = f"{val.get('confidence', 0) * 100:.0f}%" if val.get("confidence") else "—"
-    story.append(_lv_table([
-        ("Low",        Paragraph(_fmt(val.get("low")),  S_VALUE)),
-        ("Mid (used)", Paragraph(_fmt(val.get("mid")),  _ps("lp_mid", SZ_BODY, LEAD_BODY, font=FB))),
-        ("High",       Paragraph(_fmt(val.get("high")), S_VALUE)),
-        ("Confidence", Paragraph(conf_str,              S_VALUE)),
-    ], label_w=1.9*inch))
+    cw = CONTENT_W / 4
+    stat_tbl = Table(
+        [[_p("Low","b"), _p("Mid (used)","b"), _p("High","b"), _p("Confidence","b")],
+         [_p(_fmt(val.get("low")),"n"),
+          _p(_fmt(val.get("mid")),"b"),
+          _p(_fmt(val.get("high")),"n"),
+          _p(conf_str,"n")]],
+        colWidths=[cw]*4,
+    )
+    stat_tbl.setStyle(TableStyle([
+        ("FONTSIZE",      (0, 0), (-1, -1), 20),
+        ("FONTSIZE",      (0, 1), (-1, 1),  26),
+        ("LINEBELOW",     (0, 0), (-1, 0),  0.75, C_BLACK),
+        ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("BACKGROUND",    (0, 0), (-1, -1), C_WHITE),
+    ]))
+    story.append(stat_tbl)
 
     if val.get("note"):
-        story.append(Spacer(1, 8))
-        story.append(Paragraph(val["note"], S_MUTED))
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(val["note"], S["muted"]))
 
     comps = val.get("comp_detail") or []
     if comps:
-        story.append(Spacer(1, 18))
-        story.append(Paragraph("Comparable Sales", S_SUBHEAD))
-        story.append(HRFlowable(width=CONTENT_W, thickness=0.5, color=C_BLACK, spaceAfter=10))
+        story.append(Spacer(1, 14))
+        story += _subsection("Comparable Sales")
+        c_data = [[_p("Address","b"), _p("Sale Price","rb"), _p("$/sqft","rb"),
+                   _p("Weight","rb"), _p("Note","b")]]
         for c in comps:
             ppsf = c.get("actual_ppsf")
-            rows = [
-                ("Address",    Paragraph(c.get("address", "—"), S_VALUE)),
-                ("Sale Price", _neutral_amt(c.get("price"))),
-                ("$/sqft",     Paragraph(f"${ppsf:.0f}" if ppsf else "—", S_VALUE)),
-                ("Weight",     Paragraph(f"{c.get('weight', 0)*100:.1f}%", S_VALUE)),
-                ("Note",       Paragraph(c.get("note", "—"), S_VALUE)),
-            ]
-            story += _item_block(c.get("address", "—"), rows)
+            c_data.append([
+                _p(c.get("address","—"), "n"),
+                _neutral_amt(c.get("price")),
+                _p(f"${ppsf:.0f}" if ppsf else "—", "r"),
+                _p(f"{c.get('weight',0)*100:.1f}%", "r"),
+                _p(c.get("note","—"), "sm"),
+            ])
+        c_tbl = Table(c_data, colWidths=[2.3*inch, 1.0*inch, 0.7*inch, 0.7*inch, 2.3*inch],
+                      repeatRows=1)
+        c_tbl.setStyle(_tbl(len(c_data)))
+        story.append(c_tbl)
 
-    story.append(Spacer(1, 28))
+    story.append(Spacer(1, 22))
 
     # ════════════════════════════════════════════════════════════════════════
     # Repair Plan
     # ════════════════════════════════════════════════════════════════════════
     story += _section("Repair Plan")
-    story.append(Paragraph(f"{plan_label} — {plan_desc}", S_MUTED))
-    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"{plan_label} — {plan_desc}", S["muted"]))
+    story.append(Spacer(1, 10))
 
     # ── Required to Sell ─────────────────────────────────────────────────
-    if floor_items:
-        n = len(floor_items)
-        story.append(Paragraph(
-            f"Required to Sell — {n} item{'s' if n != 1 else ''}",
-            S_REQ_HEAD,
-        ))
-        story.append(HRFlowable(width=CONTENT_W, thickness=0.75, color=C_REQ, spaceAfter=6))
-        story.append(Paragraph(
-            "These must be addressed before listing. Lenders require them fixed before "
-            "approving a buyer's loan, or they are safety issues that will be flagged at "
-            "inspection. Included in every plan.",
-            S_MUTED,
-        ))
-        story.append(Spacer(1, 14))
+    # Column widths at 18pt: give notes more room, tighten action col.
+    # [Component, Reason, Action, Cost, Condition, Notes] = 7.0 in
+    F_COLS = [1.35*inch, 1.25*inch, 0.65*inch, 0.9*inch, 0.9*inch, 1.95*inch]
 
+    if floor_items:
+        n_req = len(floor_items)
+        story += _subsection(
+            f"Required to Sell — {n_req} item{'s' if n_req != 1 else ''}",
+            color=C_REQ,
+            note=(
+                "These must be addressed before listing. Lenders require them fixed before "
+                "approving a buyer's loan, or they are safety issues flagged during inspection. "
+                "Included in every plan."
+            ),
+        )
+        f_data = [[_p("Component","b"), _p("Reason Required","b"), _p("Action","b"),
+                   _p("Cost","rb"),     _p("Condition","b"),       _p("Notes","b")]]
         for item in floor_items:
-            reason_para = Paragraph(item.get("floor_reason", "required"), S_REASON)
-            rows = [
-                ("Reason",       reason_para),
-                ("Condition",    Paragraph(item.get("condition_detected") or "—", S_VALUE)),
-                ("Action",       Paragraph(PATH_LABELS.get(item.get("better_value",""),
-                                           item.get("better_value") or "—"), S_VALUE)),
-                ("Cost",         Paragraph(eff_cost(item), S_VALUE)),
-                ("Notes",        Paragraph(item.get("notes") or "—", S_VALUE)),
-            ]
-            story += _item_block(item.get("display_name", "—"), rows,
-                                 name_style=_ps("lp_req_nm", SZ_ITEM, LEAD_ITEM,
-                                                font=FB, color=C_REQ))
+            f_data.append([
+                _p(item.get("display_name","—"),     "b"),
+                _p(item.get("floor_reason","required"), "rsn"),
+                _p(PATH_LABELS.get(item.get("better_value",""), item.get("better_value") or "—"), "n"),
+                _p(eff_cost(item), "r"),
+                _p(item.get("condition_detected") or "—", "n"),
+                _p(item.get("notes") or "—", "sm"),
+            ])
+        f_tbl = Table(f_data, colWidths=F_COLS, repeatRows=1)
+        f_tbl.setStyle(_tbl(len(f_data)))
+        story.append(f_tbl)
+        cost_note = (
+            f"Required-to-sell total: "
+            f"{_fmt_range(floor_result.get('cost_low'), floor_result.get('cost_high'))}"
+        )
+        if floor_result.get("cost_mid"):
+            cost_note += f"  (mid {_fmt(floor_result['cost_mid'])})"
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(cost_note, S["muted"]))
 
     # ── Optional Improvements ─────────────────────────────────────────────
-    if disc:
-        n = len(disc)
-        story.append(Paragraph(
-            f"Optional Improvements — {n} item{'s' if n != 1 else ''} in this plan",
-            S_OPT_HEAD,
-        ))
-        story.append(HRFlowable(width=CONTENT_W, thickness=0.75, color=C_OPT, spaceAfter=6))
-        story.append(Paragraph(
-            "Not required to sell. Included because the value return justifies the spend.",
-            S_MUTED,
-        ))
-        story.append(Spacer(1, 14))
+    # [Component, Condition, Action, Cost, Value Return, Notes] = 7.0 in
+    D_COLS = [1.4*inch, 1.05*inch, 0.65*inch, 0.85*inch, 0.85*inch, 2.2*inch]
 
+    if disc:
+        n_disc = len(disc)
+        story.append(Spacer(1, 14))
+        story += _subsection(
+            f"Optional Improvements — {n_disc} item{'s' if n_disc != 1 else ''} in this plan",
+            color=C_OPT,
+            note="Not required to sell. Included because the value return justifies the spend.",
+        )
+        d_data = [[_p("Component","b"), _p("Condition","b"), _p("Action","b"),
+                   _p("Cost","rb"),     _p("Value Return","b"), _p("Notes","b")]]
         for item in disc:
-            vret_txt  = _recoup_text(item)
-            vret_para = Paragraph(vret_txt, S_VRET if "enables" in vret_txt else S_VALUE)
-            rows = [
-                ("Condition",    Paragraph(item.get("condition_detected") or "—", S_VALUE)),
-                ("Action",       Paragraph(PATH_LABELS.get(item.get("better_value",""),
-                                           item.get("better_value") or "—"), S_VALUE)),
-                ("Cost",         Paragraph(eff_cost(item), S_VALUE)),
-                ("Value Return", vret_para),
-                ("Notes",        Paragraph(item.get("notes") or "—", S_VALUE)),
-            ]
-            story += _item_block(item.get("display_name", "—"), rows,
-                                 name_style=_ps("lp_opt_nm", SZ_ITEM, LEAD_ITEM,
-                                                font=FB, color=C_OPT))
+            d_data.append([
+                _p(item.get("display_name","—"), "b"),
+                _p(item.get("condition_detected") or "—", "n"),
+                _p(PATH_LABELS.get(item.get("better_value",""), item.get("better_value") or "—"), "n"),
+                _p(eff_cost(item), "r"),
+                _recoup_cell(item),
+                _p(item.get("notes") or "—", "sm"),
+            ])
+        d_tbl = Table(d_data, colWidths=D_COLS, repeatRows=1)
+        d_tbl.setStyle(_tbl(len(d_data)))
+        story.append(d_tbl)
 
     if not floor_items and not disc:
         story.append(Paragraph(
             "No repair items found. Ensure photos are tagged and the questionnaire is submitted.",
-            S_MUTED,
+            S["muted"],
         ))
 
     # ── Items Not in This Plan ────────────────────────────────────────────
     if not_in:
-        story.append(Paragraph(
-            f"Items Not in This Plan — {len(not_in)}",
-            S_MUTED_HEAD,
-        ))
-        story.append(HRFlowable(width=CONTENT_W, thickness=0.75, color=C_MUTED, spaceAfter=6))
-        story.append(Spacer(1, 10))
-
+        story.append(Spacer(1, 14))
+        story += _subsection(f"Items Not in This Plan — {len(not_in)}", color=C_MUTED)
+        ni_data = [[_p("Component","b"), _p("Why Not Included","b"),
+                    _p("Cost","rb"),     _p("Value Return","b")]]
         for item in not_in:
-            vret_txt  = _recoup_text(item)
-            rows = [
-                ("Why excluded",  Paragraph(_skip_reason(item, plan_key), S_GRAY)),
-                ("Cost (est.)",   Paragraph(_cost_range(item), S_VALUE)),
-                ("Value Return",  Paragraph(vret_txt, S_VALUE)),
-            ]
-            story += _item_block(item.get("display_name", "—"), rows)
+            ni_data.append([
+                _p(item.get("display_name","—"), "n"),
+                _p(_skip_reason(item, plan_key), "gry"),
+                _p(_cost_range(item), "r"),
+                _recoup_cell(item),
+            ])
+        ni_tbl = Table(ni_data, colWidths=[1.5*inch, 2.85*inch, 1.0*inch, 1.65*inch],
+                       repeatRows=1)
+        ni_tbl.setStyle(_tbl(len(ni_data)))
+        story.append(ni_tbl)
 
-    story.append(Spacer(1, 28))
+    story.append(Spacer(1, 22))
 
     # ════════════════════════════════════════════════════════════════════════
-    # Net Proceeds Breakdown — simple two-column list
+    # Net Proceeds Breakdown
     # ════════════════════════════════════════════════════════════════════════
     story += _section("Estimated Net Proceeds")
 
     line_items = base_np.get("line_items") or []
     if line_items:
-        np_rows = []
+        np_data = [[_p("Item","b"), _p("Amount","rb")]]
         for i, li in enumerate(line_items):
             is_last = i == len(line_items) - 1
-            lbl = li.get("label", "")
-            amt = li.get("amount")
+            label   = li.get("label", "")
+            amount  = li.get("amount")
             if is_last:
-                np_rows.append((lbl, _amt_para(amt, bold=True)))
+                np_data.append([_p(label, "rb"), _amt(amount, bold=True)])
             else:
-                np_rows.append((lbl, _neutral_amt(amt)))
+                np_data.append([_p(label, "n"), _neutral_amt(amount)])
 
         if is_customized and live_net is not None and abs(live_net - base_net) > 0.5:
             delta = live_net - base_net
-            np_rows.append(("Custom plan adjustment (items / quotes)", _neutral_amt(delta)))
-            np_rows.append(("Adjusted Net Proceeds", _amt_para(live_net, bold=True)))
+            np_data.append([_p("Custom plan adjustment (items / quotes)", "mu"), _neutral_amt(delta)])
+            np_data.append([_p("Adjusted Net Proceeds", "rb"), _amt(live_net, bold=True)])
 
-        # Two-col net proceeds table: label col 4.5in, amount col 2.0in
-        np_data = []
-        for lbl_txt, amt_para in np_rows:
-            np_data.append([Paragraph(lbl_txt, S_BODY), amt_para])
-
-        np_tbl = Table(np_data, colWidths=[4.5*inch, 2.0*inch])
-        np_tbl.setStyle(TableStyle([
-            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-            ("ALIGN",         (1, 0), (1,  -1), "RIGHT"),
-            ("TOPPADDING",    (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ("LEFTPADDING",   (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
-            ("LINEBELOW",     (0, -1), (-1, -1), 1.0, C_BLACK),
-            ("LINEABOVE",     (0, -1), (-1, -1), 0.5, C_BLACK),
-            ("BACKGROUND",    (0, 0), (-1, -1), C_WHITE),
-            ("ROWBACKGROUNDS",(0, 0), (-1, -1), [C_WHITE]),
-        ]))
-        for r in range(len(np_data) - 1):
-            np_tbl.setStyle(TableStyle([
-                ("LINEBELOW", (0, r), (-1, r), 0.25, C_RULE),
-            ]))
+        np_tbl = Table(np_data, colWidths=[5.0*inch, 2.0*inch], repeatRows=1)
+        np_tbl.setStyle(_tbl(len(np_data), bold_last=True))
         story.append(np_tbl)
 
-        if bool(custom_costs):
-            story.append(Spacer(1, 8))
+        if bool(custom_costs) and any(
+            item["component_id"] in custom_costs for item in floor_items + disc
+        ):
+            story.append(Spacer(1, 6))
             story.append(Paragraph(
-                "* Cost marked with asterisk reflects an entered quote.",
-                S_MUTED,
+                "* Cost marked with asterisk reflects an entered quote. "
+                "Line-item breakdown uses original plan costs; adjusted net incorporates entered quotes.",
+                S["muted"],
             ))
     else:
         story.append(Paragraph(
-            f"Estimated net proceeds ({plan_label}): {_fmt(display_net)}", S_BODY
+            f"Estimated net proceeds ({plan_label}): {_fmt(display_net)}", S["body"]
         ))
 
-    story.append(Spacer(1, 28))
+    story.append(Spacer(1, 24))
 
     # ════════════════════════════════════════════════════════════════════════
     # Caveats
     # ════════════════════════════════════════════════════════════════════════
     story.append(HRFlowable(width=CONTENT_W, thickness=0.5, color=C_RULE, spaceAfter=8))
     for txt in [
-        "This is a planning estimate, not an appraisal. All figures are based on "
-        "available comparable sales and regional cost data. Confirm exact payoff "
-        "balances with your lender before making decisions.",
-        "Days-on-market is based on historical averages and seasonality. A hot or "
-        "slow market will shift this significantly.",
+        "This is a planning estimate, not an appraisal. All figures are based on available "
+        "comparable sales and regional cost data. Confirm exact payoff balances with your "
+        "lender before making decisions.",
+        "Days-on-market is based on historical averages and seasonality. "
+        "A hot or slow market will shift this significantly.",
+        "Time-to-sell is listing to closing only. It does not include time to complete "
+        "major construction — actual carrying costs will be higher while work is underway.",
         f"Commission rate used: {commission_rate * 100:.1f}%.",
     ]:
-        story.append(Paragraph(txt, S_CAVEAT))
+        story.append(Paragraph(txt, S["caveat"]))
 
     doc.build(story, onFirstPage=fn, onLaterPages=fn)
     buf.seek(0)
@@ -599,7 +592,7 @@ class LargePDFRequest(BaseModel):
 
 @router.post("/{session_id}/pdf/large")
 def get_large_pdf(session_id: str, req: LargePDFRequest):
-    """Generate and return a large-print PDF report."""
+    """Generate and return a large-print PDF report (18 pt body text)."""
     db  = get_db()
     row = db.table(TABLE).select("*").eq("id", session_id).maybe_single().execute()
     if not row.data:
