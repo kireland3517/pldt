@@ -1150,4 +1150,8 @@ function sectionHeadStyle(color, bg, icon) {
 
 const sectionStyle  = { marginBottom: 24, padding: 16, border: '1px solid #ddd', borderRadius: 4 }
 const h3            = { fontSize: 14, marginTop: 0, marginBottom: 10 }
-cons
+const gridStyle     = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 10 }
+const noteStyle     = { fontSize: 12, color: '#666', marginTop: 6, marginBottom: 0 }
+const tableStyle    = { borderCollapse: 'collapse', width: '100%', fontSize: 13 }
+const labelStyle    = { display: 'block', fontSize: 13, marginBottom: 10 }
+const btnStyle      = { padding: '7px 18px', fontSize: 13, cursor: 'pointer', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: 3 }
