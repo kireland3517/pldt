@@ -103,6 +103,13 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
             "neighborhood_sales_history": session_prop.get("neighborhood_sales_history") or [],
             "attom_meta":                 session_prop.get("attom_meta") or {},
         }
+    elif session_prop.get("fetched_comps"):
+        # Session has comps without full attom_fetched flag — prefer them over empty seed arrays
+        prop["fetched_comps"] = session_prop["fetched_comps"]
+        if session_prop.get("fetched_avms"):
+            prop["fetched_avms"] = session_prop["fetched_avms"]
+        if session_prop.get("neighborhood_sales_history"):
+            prop["neighborhood_sales_history"] = session_prop["neighborhood_sales_history"]
 
     instance     = session["instance_json"]
     listing_month = session.get("listing_month", 6)
@@ -119,14 +126,13 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
     try:
         val = compute_as_is_range(prop)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Valuation failed: {exc}. "
-                "No recent comparable sales were found — ATTOM market data "
-                "may not be available yet. Try again in a moment."
-            ),
-        )
+        attom_key_set = bool(os.environ.get("ATTOM_API_KEY"))
+        detail = f"Valuation failed: {exc}. "
+        if not attom_key_set:
+            detail += "ATTOM_API_KEY is not set — add it to the Railway backend environment variables to enable live market data."
+        else:
+            detail += "ATTOM market data fetch may have failed. Try the 'Refresh market data' button, or wait a moment and reload."
+        raise HTTPException(status_code=422, detail=detail)
 
     # Re-evaluate floor qualification at compute time.
     # defect_qualifies_floor was frozen into instance_json at capture time.
