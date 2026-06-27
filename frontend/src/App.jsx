@@ -90,7 +90,10 @@ function SessionPicker({ onSelect, onNew }) {
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12, marginTop: 6 }}>
             <tbody>
               {inProgress.map((s, i) => (
-                <tr key={s.id} style={{ background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+                <tr key={s.id}
+                    style={{ background: i % 2 === 0 ? '#fff' : '#fafafa',
+                             cursor: 'pointer' }}
+                    onClick={() => onSelect(s.id)}>
                   <td style={td}>{s.address || '—'}</td>
                   <td style={{ ...td, color: '#888' }}>{fmtDate(s.created_at)}</td>
                   <td style={{ ...td, color: '#888' }}>{s.status}</td>

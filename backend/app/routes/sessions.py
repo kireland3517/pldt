@@ -128,7 +128,9 @@ def list_sessions(limit: int = 20):
             "created_at": row["created_at"],
             "status":     row["status"],
             "net":        net,
-            "has_results": bool(cr),
+            # status=="compute" means capture is done; session is openable even
+            # if compute_result cache is NULL (it will recompute on open).
+            "has_results": bool(cr) or row["status"] == "compute",
         })
 
     return {"sessions": sessions}
