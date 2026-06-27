@@ -1156,3 +1156,6 @@ const tableStyle    = { borderCollapse: 'collapse', width: '100%', fontSize: 13 
 const labelStyle    = { display: 'block', fontSize: 13, marginBottom: 10 }
 const btnStyle      = { padding: '7px 18px', fontSize: 13, cursor: 'pointer', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: 3 }
 const detailsLink   = { fontSize: 12, color: '#2563eb', cursor: 'pointer', textDecoration: 'underline' }
+const th            = { textAlign: 'left', padding: '4px 8px', fontWeight: 600, borderBottom: '1px solid #e5e7eb', fontSize: 12, color: '#555' }
+const td            = { padding: '4px 8px', borderBottom: '1px solid #f0f0f0', verticalAlign: 'middle', fontSize: 13 }
+const caveatNote    = { fontSize: 11, color: '#9ca3af', marginTop: 4, marginBottom: 0 }
