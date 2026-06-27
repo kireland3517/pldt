@@ -355,9 +355,21 @@ def apply_condition_answers(
                 item["confidence"] = max(item["confidence"] or 0, CONF_Q_DIRECT)
                 continue
 
-            # Use the normalized condition from the answer if provided;
-            # otherwise derive it from the raw answer value.
-            cond = ans.maps_to_condition or _answer_to_condition(ans.question_id, ans.answer)
+            # Prefer the question-specific expanded text from _answer_to_condition;
+            # fall back to maps_to_condition ONLY when no specific mapping exists.
+            # _answer_to_condition returns a sentinel "Q-X=answer" default for
+            # unknown combos — that is the only case where maps_to_condition wins.
+            # This prevents a generic frontend enum ("poor") from silently
+            # replacing precise trigger text ("standing water in crawlspace; active water").
+            q_expanded = _answer_to_condition(ans.question_id, ans.answer)
+            _default_sentinel = f"{ans.question_id}={ans.answer}"
+            if q_expanded != _default_sentinel:
+                cond = q_expanded          # specific mapping wins
+            elif ans.maps_to_condition:
+                # No specific mapping — use caller-supplied value and normalize any bare enum
+                cond = _CONDITION_ENUM_MAP.get(ans.maps_to_condition.lower(), (ans.maps_to_condition,))[0]
+            else:
+                cond = q_expanded          # sentinel — shows up as a data-quality warning
             sev  = ans.maps_to_severity  or _infer_severity(cond)
 
             if item["condition_detected"] is None:
@@ -619,7 +631,9 @@ def apply_seller_confirmed(
             touched = True
 
         if condition is not None:
-            item["condition_detected"] = condition
+            # Normalize bare enum before writing (seller review UI may pass
+            # 'poor'/'failed' directly; expand to keyword-matchable text).
+            item["condition_detected"] = _CONDITION_ENUM_MAP.get(condition.lower(), (condition,))[0]
             touched = True
 
         if severity is not None:
