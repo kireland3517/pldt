@@ -1,6 +1,82 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { getCompute, updateInputs } from '../api'
 
+
+// ── Tooltip copy ─────────────────────────────────────────────────────────────
+// Exact copy approved by product — do not paraphrase.
+const TIPS = {
+  requiredToSell: "These repairs aren't about making money. Most buyers\u2019 lenders or basic safety rules won\u2019t overlook them, so fixing them is what lets your home sell to a typical buyer at all. They\u2019re in every plan because they aren\u2019t really optional.",
+  enablesSale:    "Fixing this mostly removes a discount a buyer would otherwise demand, rather than adding value on top. Skipping it can lower your price or, for serious issues, cost you buyers whose lender won\u2019t approve the home as-is.",
+  optionalValue:  "Not required to sell. These are updates that tend to help your home sell better or for more. You choose which are worth it.",
+  valueReturn:    "Roughly how much of this update\u2019s cost typically comes back in your sale price, based on regional cost-vs-value data. Over 100% means it tends to return more than it costs.",
+  planROI:        "For every dollar this plan spends on improvements, this is what comes back in sale price. A negative number is normal for plans with required repairs, those exist to make the sale possible, not to profit.",
+  valueLiftCapped:"We limited the projected price to what comparable renovated homes in your area actually sell for. Improvements can\u2019t push your price above what the market supports.",
+  belowROI:       "This item returns less at sale than it costs to do, so it\u2019s not in the recommended plan. You can still add it, but it won\u2019t pay for itself.",
+  getChecked:     "We don\u2019t have enough to estimate this reliably, so the honest move is to have a professional look before deciding, rather than us guessing a cost.",
+  investorPath:   "Homes with this issue usually can\u2019t be bought with a normal mortgage, so they tend to sell to a cash investor for less. Fixing it before listing keeps your home open to all buyers. Selling as-is is a real choice, we\u2019re just showing you the difference.",
+}
+
+// ── Tooltip component — hover (desktop) + tap (mobile) ───────────────────────
+function Tip({ id }) {
+  const [open, setOpen] = React.useState(false)
+  const text = TIPS[id]
+  if (!text) return null
+
+  function toggle(e) {
+    e.stopPropagation()
+    setOpen(v => {
+      if (!v) {
+        // Close on next outside click
+        setTimeout(() => document.addEventListener('click', () => setOpen(false), { once: true }), 0)
+      }
+      return !v
+    })
+  }
+
+  return (
+    <span style={{ position: 'relative', display: 'inline-block', verticalAlign: 'middle' }}>
+      <span
+        role="button"
+        tabIndex={0}
+        aria-label="What does this mean?"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onClick={toggle}
+        onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && toggle(e)}
+        style={{
+          cursor: 'help',
+          marginLeft: 4,
+          color: '#9ca3af',
+          fontSize: 13,
+          lineHeight: 1,
+          userSelect: 'none',
+          display: 'inline-block',
+        }}
+      >ⓘ</span>
+      {open && (
+        <span style={{
+          position: 'absolute',
+          bottom: 'calc(100% + 6px)',
+          left: 0,
+          zIndex: 9999,
+          background: '#1f2937',
+          color: '#f3f4f6',
+          fontSize: 12,
+          lineHeight: 1.55,
+          padding: '9px 12px',
+          borderRadius: 6,
+          width: 'min(260px, 85vw)',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+          whiteSpace: 'normal',
+          pointerEvents: 'none',
+        }}>
+          {text}
+        </span>
+      )}
+    </span>
+  )
+}
+
 const PLAN_LABELS = {
   leaner:        'Leaner',
   recommended:   'Recommended',
@@ -413,9 +489,8 @@ export default function ResultsStep({ sessionId }) {
                   <div style={{ fontSize: 11, color: '#1a7f37', marginTop: 2 }}>
                     +{fmt(p.value_lift_capped)} est. value lift
                     {p.value_lift_cap_binding && (
-                      <span title={`Capped at comp ceiling ${fmt(p.improved_listing_ceiling)}`}
-                        style={{ marginLeft: 4, color: '#b45309', cursor: 'default' }}>
-                        ⚑ capped
+                      <span style={{ marginLeft: 4, color: '#b45309', cursor: 'default' }}>
+                        ⚑ value lift capped<Tip id="valueLiftCapped" />
                       </span>
                     )}
                   </div>
@@ -423,7 +498,7 @@ export default function ResultsStep({ sessionId }) {
                 {p.plan_roi_pct != null && (
                   <div style={{ fontSize: 11, color: p.plan_roi_pct >= 0 ? '#1a7f37' : '#c00', marginTop: 2 }}>
                     Plan ROI: {p.plan_roi_pct > 0 ? '+' : ''}{p.plan_roi_pct}%
-                    <span style={{ color: '#888', fontWeight: 400 }}> (lift ÷ spend)</span>
+                    <Tip id="planROI" />
                   </div>
                 )}
                 <div style={{ fontSize: 11, color: '#777', marginTop: 4 }}>
@@ -500,7 +575,7 @@ export default function ResultsStep({ sessionId }) {
         {floorItems.length > 0 && (
           <div style={{ marginBottom: 24 }}>
             <div style={sectionHeadStyle('#7c2d12', '#fef3c7', '⚠')}>
-              Required to sell — {floorItems.length} item{floorItems.length !== 1 ? 's' : ''}
+              Required to sell<Tip id="requiredToSell" /> — {floorItems.length} item{floorItems.length !== 1 ? 's' : ''}
             </div>
             <p style={{ fontSize: 12, color: '#78350f', margin: '6px 0 10px' }}>
               These must be addressed before listing. Lenders require them fixed before approving a buyer's loan,
@@ -555,7 +630,7 @@ export default function ResultsStep({ sessionId }) {
                 fontSize: 13,
               }}>
                 <div style={{ fontWeight: 600, marginBottom: 8, color: '#374151' }}>
-                  Why these repairs matter for your buyer pool
+                  Why these repairs matter for your buyer pool<Tip id="investorPath" />
                 </div>
                 <p style={{ margin: '0 0 10px', color: '#4b5563', lineHeight: 1.5 }}>
                   Homes with active foundation moisture, roof leaks, or serious electrical issues
@@ -616,7 +691,7 @@ export default function ResultsStep({ sessionId }) {
         {/* ── Section 2: Optional — increases value ── */}
         <div style={{ marginBottom: 20 }}>
           <div style={sectionHeadStyle('#14532d', '#f0fdf4', '↑')}>
-            Optional — increases value
+            Optional — increases value<Tip id="optionalValue" />
             {discretionary.length > 0
               ? ` — ${discretionary.length} item${discretionary.length !== 1 ? 's' : ''} selected`
               : ' — none selected'}
@@ -635,7 +710,7 @@ export default function ResultsStep({ sessionId }) {
                   <th style={th}>Condition</th>
                   <th style={th}>Rec. action</th>
                   <th style={th} title="Click any cost to enter your real quote">Cost estimate ✎</th>
-                  <th style={th}>Value return</th>
+                  <th style={th}>Value return<Tip id="valueReturn" /></th>
                   <th style={th}>Note</th>
                 </tr>
               </thead>
@@ -659,8 +734,14 @@ export default function ResultsStep({ sessionId }) {
                         onCostSave={handleCostSave}
                       />
                     </td>
-                    <td style={{ ...td, fontSize: 11 }}>{item.effective_recoup_label || `${item.recoup_pct?.toFixed(0)}%`}</td>
-                    <td style={{ ...td, fontSize: 11, color: '#777' }}>{item.notes || '—'}</td>
+                    <td style={{ ...td, fontSize: 11 }}>
+                      {item.effective_recoup_label || `${item.recoup_pct?.toFixed(0)}%`}
+                      {item.effective_recoup_label === 'enables sale / removes discount' && <Tip id="enablesSale" />}
+                    </td>
+                    <td style={{ ...td, fontSize: 11, color: '#777' }}>
+                      {item.notes || '—'}
+                      {/inspect|get this checked/i.test(item.notes || '') && <Tip id="getChecked" />}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -690,7 +771,10 @@ export default function ResultsStep({ sessionId }) {
                 </tr>
               </thead>
               <tbody>
-                {notIncluded.map((item, i) => (
+                {notIncluded.map((item, i) => {
+                  const reason = skipReason(item, selectedPlan)
+                  const label  = item.effective_recoup_label || (item.recoup_pct != null ? `${item.recoup_pct?.toFixed(0)}%` : '—')
+                  return (
                   <tr key={i}>
                     <td style={{ ...td, textAlign: 'center' }}>
                       <input type="checkbox" checked={false}
@@ -700,7 +784,9 @@ export default function ResultsStep({ sessionId }) {
                     <td style={td}>{item.display_name}</td>
                     <td style={{ ...td, fontSize: 11 }}>{item.condition_detected || '—'}</td>
                     <td style={{ ...td, fontSize: 11, color: '#888' }}>
-                      {skipReason(item, selectedPlan)}
+                      {reason}
+                      {reason.startsWith('Below ROI') && <Tip id="belowROI" />}
+                      {/inspect|get this checked/i.test(reason) && <Tip id="getChecked" />}
                     </td>
                     <td style={td}>
                       <CostCell
@@ -712,10 +798,12 @@ export default function ResultsStep({ sessionId }) {
                       />
                     </td>
                     <td style={{ ...td, fontSize: 11 }}>
-                      {item.effective_recoup_label || (item.recoup_pct != null ? `${item.recoup_pct?.toFixed(0)}%` : '—')}
+                      {label}
+                      {label === 'enables sale / removes discount' && <Tip id="enablesSale" />}
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </details>
