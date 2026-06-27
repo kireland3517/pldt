@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { getCompute, updateInputs } from '../api'
+import { getCompute, updateInputs, downloadPdf } from '../api'
 
 
 // ── Tooltip copy ─────────────────────────────────────────────────────────────
@@ -293,146 +293,6 @@ export default function ResultsStep({ sessionId }) {
 
   useEffect(() => { load() }, [load])
 
-  // Inject print stylesheet on mount
-  useEffect(() => {
-    const style = document.createElement('style')
-    style.id = 'pldt-print-styles'
-    style.textContent = `
-      @media print {
-        /* ── Visibility ── */
-        .no-print  { display: none !important; }
-        .print-only { display: block !important; }
-
-        /* ── Global color / chrome reset ── */
-        * {
-          color: #000 !important;
-          background-color: transparent !important;
-          background-image: none !important;
-          box-shadow: none !important;
-        }
-
-        /* ── Page ── */
-        @page { margin: 0.75in; }
-        body {
-          font-family: Georgia, 'Times New Roman', serif;
-          font-size: 10pt;
-          line-height: 1.45;
-          padding-bottom: 22pt;
-        }
-
-        /* ── Strip card chrome ── */
-        section {
-          border: none !important;
-          border-radius: 0 !important;
-          padding: 0 !important;
-          margin: 0 0 20pt !important;
-        }
-        div[style] { border-radius: 0 !important; }
-
-        /* ── Headings ── */
-        h2 { font-size: 13pt; font-weight: 700; margin: 0 0 4pt; page-break-after: avoid; }
-        h3 {
-          font-size: 11pt; font-weight: 700;
-          margin: 0 0 8pt; padding-bottom: 4pt;
-          border: none !important;
-          border-bottom: 1pt solid #000 !important;
-          page-break-after: avoid;
-        }
-        p { font-size: 9pt; margin: 0 0 4pt; line-height: 1.45; }
-
-        /* ── Plan comparison cards: strip boxes, keep flex layout ── */
-        .plan-card {
-          border: none !important;
-          border-right: 0.5pt solid #bbb !important;
-          border-radius: 0 !important;
-          padding: 6pt 14pt 6pt 0 !important;
-          cursor: default !important;
-        }
-        .plan-card:last-child { border-right: none !important; }
-        .plan-card-label { font-size: 10pt !important; font-weight: 700 !important; }
-        .plan-card-desc  { font-size: 8pt !important; margin-bottom: 4pt !important; }
-        .plan-card-net   { font-size: 13pt !important; font-weight: 700 !important; }
-        .plan-card-selected .plan-card-label {
-          text-decoration: underline !important;
-          text-underline-offset: 2pt;
-        }
-
-        /* ── Sub-section labels (Required / Optional / Quick refresh) ── */
-        .section-head {
-          display: block !important;
-          font-size: 10.5pt !important;
-          font-weight: 700 !important;
-          border-radius: 0 !important;
-          border: none !important;
-          border-top: 1.5pt solid #000 !important;
-          padding: 6pt 0 3pt !important;
-          margin: 14pt 0 5pt !important;
-          page-break-after: avoid;
-        }
-
-        /* ── Tables ── */
-        table {
-          width: 100% !important;
-          border-collapse: collapse !important;
-          font-size: 9pt !important;
-          page-break-inside: auto;
-          margin: 0 0 6pt;
-        }
-        thead { display: table-header-group; }
-        th {
-          border: none !important;
-          border-bottom: 1pt solid #000 !important;
-          font-weight: 700 !important;
-          font-size: 8.5pt !important;
-          padding: 3pt 6pt !important;
-          text-align: left !important;
-          white-space: nowrap;
-          letter-spacing: 0.01em;
-        }
-        td {
-          border: none !important;
-          border-bottom: 0.5pt solid #ddd !important;
-          padding: 3pt 6pt !important;
-          vertical-align: top !important;
-          font-size: 9pt !important;
-        }
-        tbody tr:last-child td { border-bottom: 1pt solid #000 !important; }
-        tr { page-break-inside: avoid; page-break-after: auto; }
-
-        /* ── Right-align currency / numeric columns ── */
-        th.num, td.num { text-align: right !important; }
-
-        /* ── Form controls ── */
-        input[type="checkbox"],
-        input[type="range"],
-        input[type="number"] { display: none !important; }
-
-        /* ── Interactive text decoration on cost cells ── */
-        span[style*="dotted"] { text-decoration: none !important; }
-
-        /* ── Expand collapsed details ── */
-        details { display: block !important; }
-        details > summary { display: none !important; }
-
-        /* ── Fixed footer on every page ── */
-        .print-footer {
-          display: flex !important;
-          position: fixed;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          font-size: 7.5pt;
-          font-family: Georgia, serif;
-          border-top: 0.5pt solid #aaa;
-          padding: 3pt 0 0;
-          justify-content: space-between;
-          background: #fff !important;
-        }
-      }
-    `
-    document.head.appendChild(style)
-    return () => document.getElementById('pldt-print-styles')?.remove()
-  }, [])
 
   // Reset custom items when plan tab changes
   useEffect(() => { setCustomItems(null) }, [selectedPlan])
@@ -480,14 +340,24 @@ export default function ResultsStep({ sessionId }) {
     }
   }
 
-  function handlePrint() {
-    const allDetails = document.querySelectorAll('details')
-    const states = [...allDetails].map(d => d.open)
-    allDetails.forEach(d => { d.open = true })
-    window.addEventListener('afterprint', () => {
-      allDetails.forEach((d, i) => { d.open = states[i] })
-    }, { once: true })
-    window.print()
+  const [pdfLoading, setPdfLoading] = React.useState(false)
+  const [pdfError,   setPdfError]   = React.useState(null)
+
+  async function handleDownloadPdf() {
+    setPdfLoading(true)
+    setPdfError(null)
+    try {
+      await downloadPdf(sessionId, {
+        planKey:     selectedPlan,
+        customItems: customItems,   // null = use plan defaults
+        customCosts: customCosts,
+        liveNet:     liveNet,
+      })
+    } catch (err) {
+      setPdfError(err.message)
+    } finally {
+      setPdfLoading(false)
+    }
   }
 
   if (loading) return <p style={{ padding: 24 }}>Computing results…</p>
@@ -572,11 +442,16 @@ export default function ResultsStep({ sessionId }) {
                     marginBottom: 4 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h2 style={{ fontSize: 16, margin: 0 }}>Report</h2>
-          <button className="no-print" onClick={handlePrint}
-            style={{ fontSize: 11, padding: '3px 10px', cursor: 'pointer',
+          <button className="no-print" onClick={handleDownloadPdf} disabled={pdfLoading}
+            style={{ fontSize: 11, padding: '3px 10px', cursor: pdfLoading ? 'default' : 'pointer',
                      border: '1px solid #ccc', borderRadius: 3, background: '#f9f9f9' }}>
-            Print / Save as PDF
+            {pdfLoading ? 'Generating PDF…' : 'Download PDF'}
           </button>
+          {pdfError && (
+            <span className="no-print" style={{ fontSize: 11, color: 'red', marginLeft: 8 }}>
+              {pdfError}
+            </span>
+          )}
         </div>
         <span className="no-print" style={{ fontSize: 11, color: '#aaa', fontFamily: 'monospace' }}
               title='Copy this ID to resume the session later'>

@@ -83,3 +83,30 @@ export async function listSessions(limit = 20) {
   if (!res.ok) throw new Error(res.statusText)
   return json(res)
 }
+
+export async function downloadPdf(sessionId, { planKey, customItems, customCosts, liveNet }) {
+  const body = {
+    plan_key:     planKey,
+    custom_items: customItems ? [...customItems] : null,
+    custom_costs: (customCosts && Object.keys(customCosts).length > 0) ? customCosts : null,
+    live_net:     liveNet,
+  }
+  const res = await fetch(`${BASE}/session/${sessionId}/pdf`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const msg = await res.text()
+    throw new Error(`PDF generation failed (${res.status}): ${msg.slice(0, 200)}`)
+  }
+  const blob = await res.blob()
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href     = url
+  a.download = `pldt-report-${sessionId.slice(0, 8)}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}

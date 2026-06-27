@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from .data_loader import ReferenceData
-from .routes import sessions, capture, compute, export, vision
+from .routes import sessions, capture, compute, export, vision, pdf_gen
 
 load_dotenv()
 
@@ -50,3 +50,4 @@ app.include_router(capture.router,  prefix="/session",  tags=["capture"])
 app.include_router(compute.router,  prefix="/session",  tags=["compute"])
 app.include_router(export.router,   prefix="/session",  tags=["export"])
 app.include_router(vision.router,   prefix="/session",  tags=["vision"])
+app.include_router(pdf_gen.router,  prefix="/session",  tags=["pdf"])
