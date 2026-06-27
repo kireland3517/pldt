@@ -422,21 +422,89 @@ def generate_pdf(
     if comps:
         story.append(Spacer(1, 10))
         story += _subsection("Comparable Sales")
-        c_data = [[_p("Address","b"), _p("Sale Price","rb"), _p("$/sqft","rb"),
-                   _p("Weight","rb"), _p("Note","b")]]
+        c_data = [[_p("Address","b"), _p("Sold","b"), _p("Sale Price","rb"),
+                   _p("$/sqft","rb"), _p("Weight","rb"), _p("Note","b")]]
         for c in comps:
             ppsf = c.get("actual_ppsf")
             c_data.append([
                 _p(c.get("address","—"), "n"),
+                _p(c.get("sold","—"),    "n"),
                 _neutral_amt(c.get("price")),
                 _p(f"${ppsf:.0f}" if ppsf else "—", "r"),
                 _p(f"{c.get('weight',0)*100:.1f}%", "r"),
                 _p(c.get("note","—"), "n"),
             ])
-        c_tbl = Table(c_data, colWidths=[2.55*inch, 0.9*inch, 0.65*inch, 0.6*inch, 2.3*inch],
+        c_tbl = Table(c_data, colWidths=[2.0*inch, 0.65*inch, 0.85*inch, 0.6*inch, 0.55*inch, 2.35*inch],
                       repeatRows=1)
         c_tbl.setStyle(_tbl(len(c_data)))
         story.append(c_tbl)
+
+    story.append(Spacer(1, 10))
+
+    # ── Active listings ───────────────────────────────────────────────────
+    active_listings = session.get("compute_result", {}).get("active_listings") or []
+    if active_listings:
+        story += _subsection("Active Listings — Current Competition")
+        story.append(Paragraph(
+            "Homes currently on the market in the surrounding area. "
+            "Active = listed; Pending = under contract, not yet closed.",
+            S["muted"],
+        ))
+        al_data = [[_p("Address","b"), _p("List Price","rb"), _p("$/sqft","rb"),
+                    _p("Sqft","rb"), _p("Beds/Ba","b"), _p("DOM","rb"), _p("Status","b")]]
+        for l in active_listings:
+            sqft = l.get("sqft")
+            ppsf = f"${round(l['list_price']/sqft)}" if sqft else "—"
+            baba = f"{l.get('beds','?')}/{l.get('baths','?')}"
+            status_style = "rsn" if l.get("status") == "Pending" else "vret"
+            al_data.append([
+                _p(l.get("address","—"), "n"),
+                _neutral_amt(l.get("list_price")),
+                _p(ppsf, "r"),
+                _p(f"{sqft:,}" if sqft else "—", "r"),
+                _p(baba, "n"),
+                _p(str(l.get("dom","—")), "r"),
+                _p(l.get("status","—"), status_style),
+            ])
+        al_tbl = Table(al_data,
+                       colWidths=[2.05*inch, 0.85*inch, 0.6*inch, 0.6*inch,
+                                  0.6*inch, 0.5*inch, 0.8*inch],
+                       repeatRows=1)
+        al_tbl.setStyle(_tbl(len(al_data)))
+        story.append(al_tbl)
+        story.append(Spacer(1, 10))
+
+    # ── 5-year sales history (context only — not in valuation math) ───────
+    sales_history = session.get("compute_result", {}).get("sales_history_5yr") or []
+    if sales_history:
+        story += _subsection("5-Year Neighborhood Sales History — Context Only")
+        story.append(Paragraph(
+            "CONTEXT ONLY — these sales are NOT used in the valuation. "
+            "The as-is estimate uses recent comparable sales only. "
+            "This history shows how the neighborhood has trended over time.",
+            _ps("pdf_ctx", fontName=FBI, fontSize=8.5, leading=11,
+                textColor=colors.HexColor("#92400e"), spaceAfter=4),
+        ))
+        sh_data = [[_p("Sold","b"), _p("Address","b"), _p("Price","rb"),
+                    _p("$/sqft","rb"), _p("Sqft","rb"), _p("Beds/Ba","b")]]
+        for s in sorted(sales_history, key=lambda x: x.get("sold",""), reverse=True):
+            sqft = s.get("sqft")
+            ppsf_v = s.get("ppsf") or (round(s["price"]/sqft) if sqft else None)
+            baba = f"{s.get('beds','?')}/{s.get('baths','?')}"
+            sh_data.append([
+                _p(s.get("sold","—"), "n"),
+                _p(s.get("address","—"), "n"),
+                _neutral_amt(s.get("price")),
+                _p(f"${ppsf_v}" if ppsf_v else "—", "r"),
+                _p(f"{sqft:,}" if sqft else "—", "r"),
+                _p(baba, "n"),
+            ])
+        sh_tbl = Table(sh_data,
+                       colWidths=[0.65*inch, 2.5*inch, 0.9*inch,
+                                  0.65*inch, 0.65*inch, 0.65*inch],
+                       repeatRows=1)
+        sh_tbl.setStyle(_tbl(len(sh_data)))
+        story.append(sh_tbl)
 
     story.append(Spacer(1, 18))
 

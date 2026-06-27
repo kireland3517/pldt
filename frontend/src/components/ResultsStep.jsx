@@ -384,10 +384,12 @@ export default function ResultsStep({ sessionId }) {
   if (error)   return <p style={{ color: 'red', padding: 24 }}>Error: {error}</p>
   if (!result) return null
 
-  const val      = result.valuation || result.as_is_range || {}
-  const plans    = result.plans     || {}
-  const floor    = result.floor     || {}
-  const repair   = result.repair_table || []
+  const val            = result.valuation || result.as_is_range || {}
+  const plans          = result.plans     || {}
+  const floor          = result.floor     || {}
+  const repair         = result.repair_table || []
+  const activeListings = result.active_listings   || []
+  const salesHistory   = result.sales_history_5yr || []
   const planKeys = ['leaner', 'recommended', 'do_everything'].filter(k => plans[k])
 
   const isUnderwater = planKeys.length > 0 &&
@@ -502,20 +504,104 @@ export default function ResultsStep({ sessionId }) {
         {val.note && <p style={noteStyle}>{val.note}</p>}
         {val.comp_detail?.length > 0 && (
           <details style={{ marginTop: 12 }}>
-            <summary style={detailsLink}>Comparable sales detail</summary>
+            <summary style={detailsLink}>Comparable sales used in valuation</summary>
             <table style={tableStyle}>
               <thead><tr>
-                <th style={th}>Address</th><th style={th}>Price</th>
-                <th style={th}>$/sqft</th><th style={th}>Weight</th><th style={th}>Note</th>
+                <th style={th}>Address</th>
+                <th style={th}>Sold</th>
+                <th style={{...th, textAlign:'right'}}>Price</th>
+                <th style={{...th, textAlign:'right'}}>$/sqft</th>
+                <th style={{...th, textAlign:'right'}}>Weight</th>
+                <th style={th}>Note</th>
               </tr></thead>
               <tbody>
                 {val.comp_detail.map((c, i) => (
                   <tr key={i}>
                     <td style={td}>{c.address}</td>
-                    <td style={td}>{fmt(c.price)}</td>
-                    <td style={td}>${c.actual_ppsf?.toFixed(2)}</td>
-                    <td style={td}>{(c.weight * 100).toFixed(1)}%</td>
-                    <td style={td}>{c.note}</td>
+                    <td style={td}>{c.sold || '—'}</td>
+                    <td style={{...td, textAlign:'right'}}>{fmt(c.price)}</td>
+                    <td style={{...td, textAlign:'right'}}>${c.actual_ppsf?.toFixed(0)}</td>
+                    <td style={{...td, textAlign:'right'}}>{(c.weight * 100).toFixed(1)}%</td>
+                    <td style={td}>{c.note || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        )}
+
+        {/* ── Active listings: seller's competition ── */}
+        {activeListings.length > 0 && (
+          <details style={{ marginTop: 12 }}>
+            <summary style={detailsLink}>Active listings — current competition</summary>
+            <p style={{...noteStyle, marginTop:6}}>
+              Homes currently on the market in the surrounding area. These are the seller's
+              direct competition. Active = listed, not yet under contract. Pending = under
+              contract, not yet closed.
+            </p>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={th}>Address</th>
+                <th style={{...th, textAlign:'right'}}>List Price</th>
+                <th style={{...th, textAlign:'right'}}>$/sqft</th>
+                <th style={{...th, textAlign:'right'}}>Sqft</th>
+                <th style={{...th, textAlign:'right'}}>Beds/Ba</th>
+                <th style={{...th, textAlign:'right'}}>Days on Mkt</th>
+                <th style={th}>Status</th>
+              </tr></thead>
+              <tbody>
+                {activeListings.map((l, i) => (
+                  <tr key={i}>
+                    <td style={td}>{l.address}</td>
+                    <td style={{...td, textAlign:'right'}}>{fmt(l.list_price)}</td>
+                    <td style={{...td, textAlign:'right'}}>
+                      {l.sqft ? `$${Math.round(l.list_price / l.sqft)}` : '—'}
+                    </td>
+                    <td style={{...td, textAlign:'right'}}>{l.sqft?.toLocaleString() || '—'}</td>
+                    <td style={{...td, textAlign:'right'}}>{l.beds}/{l.baths}</td>
+                    <td style={{...td, textAlign:'right'}}>{l.dom ?? '—'}</td>
+                    <td style={{...td,
+                      color: l.status === 'Pending' ? '#92400e' : '#14532d',
+                      fontWeight: 600}}>
+                      {l.status}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        )}
+
+        {/* ── 5-year neighborhood sales history: context only ── */}
+        {salesHistory.length > 0 && (
+          <details style={{ marginTop: 12 }}>
+            <summary style={detailsLink}>5-year neighborhood sales history — context only</summary>
+            <p style={{...noteStyle, marginTop:6,
+                        borderLeft: '3px solid #b45309',
+                        paddingLeft: 8, color: '#92400e'}}>
+              <strong>Context only — not used in valuation.</strong> The as-is value estimate
+              above is computed from recent comparable sales only. Older sales reflect different
+              market conditions and would distort today's estimate if included. This history
+              is shown so the seller can see how the neighborhood has trended over time.
+            </p>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={th}>Sold</th>
+                <th style={th}>Address</th>
+                <th style={{...th, textAlign:'right'}}>Price</th>
+                <th style={{...th, textAlign:'right'}}>$/sqft</th>
+                <th style={{...th, textAlign:'right'}}>Sqft</th>
+                <th style={{...th, textAlign:'right'}}>Beds/Ba</th>
+              </tr></thead>
+              <tbody>
+                {[...salesHistory].sort((a,b) => b.sold.localeCompare(a.sold)).map((s, i) => (
+                  <tr key={i}>
+                    <td style={td}>{s.sold}</td>
+                    <td style={td}>{s.address}</td>
+                    <td style={{...td, textAlign:'right'}}>{fmt(s.price)}</td>
+                    <td style={{...td, textAlign:'right'}}>${s.ppsf || Math.round(s.price/s.sqft)}</td>
+                    <td style={{...td, textAlign:'right'}}>{s.sqft?.toLocaleString()}</td>
+                    <td style={{...td, textAlign:'right'}}>{s.beds}/{s.baths}</td>
                   </tr>
                 ))}
               </tbody>

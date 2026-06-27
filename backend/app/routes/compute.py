@@ -89,12 +89,18 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
         has_hoa=has_hoa,
     )
 
+    # active_listings and sales_history_5yr are display-only.
+    # They are sourced from property_inputs but NEVER passed into
+    # compute_as_is_range(). The valuation regression uses only
+    # fetched_comps, which is unchanged.
     return {
-        "valuation":         val,
-        "condition_summary": summary,
-        "floor":             floor_result,
-        "repair_table":      enriched,
-        "plans":             plans,
+        "valuation":          val,
+        "condition_summary":  summary,
+        "floor":              floor_result,
+        "repair_table":       enriched,
+        "plans":              plans,
+        "active_listings":    prop.get("fetched_active_listings") or [],
+        "sales_history_5yr":  prop.get("neighborhood_sales_history") or [],
     }
 
 

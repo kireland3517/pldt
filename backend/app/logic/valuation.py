@@ -140,6 +140,7 @@ def compute_as_is_range(property_inputs: dict) -> dict:
             "weight":        round(ws[i], 4),
             "leverage":      round(hat, 4),
             "note":          c.get("note", ""),
+            "sold":          c.get("sold", ""),
         })
 
     bw_used = max(150.0, 0.10 * subject_sqft)
