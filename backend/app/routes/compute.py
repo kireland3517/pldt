@@ -131,11 +131,11 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
         except Exception:
             pass
 
-    instance     = session["instance_json"]
+    instance      = session["instance_json"]
     listing_month = session.get("listing_month", 6)
     seller_inputs = session.get("seller_inputs") or {}
     commission_rate = session.get("commission_rate") or 0.06
-    has_hoa      = session.get("has_hoa", False)
+    has_hoa       = session.get("has_hoa", False)
 
     if not prop:
         raise HTTPException(status_code=422, detail="Session has no property_json. Re-create session.")
@@ -292,4 +292,31 @@ def update_inputs(session_id: str, body: InputsUpdate):
 
 
 @router.post("/{session_id}/refetch-market-data")
-de
+def refetch_market_data(session_id: str):
+    """
+    Clear cached ATTOM data so the next compute() call re-fetches fresh
+    market data from ATTOM.  Never touches instance_json (tags/conditions).
+    """
+    db = get_db()
+
+    row = db.table(TABLE).select("*").eq("id", session_id).maybe_single().execute()
+    if not row.data:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+
+    prop = row.data.get("property_json") or {}
+    attom_keys = {
+        "attom_fetched", "fetched_avms", "fetched_comps",
+        "fetched_active_listings", "neighborhood_sales_history", "attom_meta",
+    }
+    cleaned_prop = {k: v for k, v in prop.items() if k not in attom_keys}
+
+    db.table(TABLE).update({
+        "property_json":  cleaned_prop,
+        "compute_result": None,
+    }).eq("id", session_id).execute()
+
+    return {
+        "ok":        True,
+        "session_id": session_id,
+        "message":   "Market data cleared. Re-run compute to fetch fresh ATTOM data.",
+    }
