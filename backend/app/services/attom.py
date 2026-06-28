@@ -25,9 +25,9 @@ from datetime import date, timedelta
 from pathlib import Path
 
 BASE           = "https://api.gateway.attomdata.com"
-MIN_COMP_COUNT = 3
-RADII          = [1.0, 2.0, 3.0, 5.0]
-CONF_RADIUS    = 2.0
+MIN_COMP_COUNT = 5
+RADII          = [1.0, 1.5, 2.0]
+CONF_RADIUS    = 1.0   # comps beyond this get "extended radius" note
 
 _SEED_DIR = Path(__file__).resolve().parent.parent.parent / "seed"
 
@@ -73,15 +73,19 @@ def _normalize_addr(addr: str) -> str:
 def _extract_snapshot_entry(p: dict) -> dict | None:
     """
     Field map (case-sensitive, from raw ATTOM JSON):
-      price      -> sale.amount.saleamt
-      sale date  -> sale.saleTransDate
-      sqft       -> building.size.universalsize
-      address    -> address.oneLine
-      beds       -> building.rooms.beds
-      baths      -> building.rooms.bathstotal
-      year built -> summary.yearbuilt
-      prop type  -> summary.proptype
-      distance   -> location.distance
+      price        -> sale.amount.saleamt
+      sale date    -> sale.saleTransDate
+      sqft         -> building.size.universalsize
+      address      -> address.oneLine
+      beds         -> building.rooms.beds
+      baths        -> building.rooms.bathstotal
+      year_built   -> summary.yearbuilt
+      prop type    -> summary.proptype
+      distance_mi  -> location.distance
+
+    is_newer_build: explicit boolean, True when year_built > 2010.
+    note:           display text only (e.g. "extended radius"); NOT used
+                    as a weight trigger in valuation.py.
     """
     sale      = p.get("sale", {})
     sale_amt  = float((sale.get("amount") or {}).get("saleamt") or 0)
@@ -95,27 +99,30 @@ def _extract_snapshot_entry(p: dict) -> dict | None:
     if sqft <= 0:
         return None
 
-    rooms = bldg.get("rooms", {})
-    beds  = int(rooms.get("beds") or 0)
-    baths = float(rooms.get("bathstotal") or 0)
-    addr  = p.get("address", {}).get("oneLine", "")
-    yr    = p.get("summary", {}).get("yearbuilt")
-    ppsf  = round(sale_amt / sqft)
-    dist  = float((p.get("location") or {}).get("distance") or 0)
+    rooms      = bldg.get("rooms", {})
+    beds       = int(rooms.get("beds") or 0)
+    baths      = float(rooms.get("bathstotal") or 0)
+    addr       = p.get("address", {}).get("oneLine", "")
+    yr         = p.get("summary", {}).get("yearbuilt")
+    ppsf       = round(sale_amt / sqft)
+    dist       = float((p.get("location") or {}).get("distance") or 0)
+
+    is_newer   = bool(yr and int(yr) > 2010)
 
     entry: dict = {
         "address":        addr,
         "beds":           beds,
         "baths":          baths,
         "sqft":           int(sqft),
-        "built":          yr,
+        "year_built":     yr,
         "sold":           _ym(sale_date),
         "price":          int(sale_amt),
         "ppsf":           ppsf,
-        "_sale_date_iso": sale_date,
-        "_distance_mi":   dist,
+        "distance_mi":    dist,
+        "is_newer_build": is_newer,
+        "_sale_date_iso": sale_date,   # internal only; stripped by _clean
     }
-    if yr and int(yr) > 2010:
+    if is_newer:
         entry["note"] = "newer build"
     return entry
 
@@ -182,11 +189,15 @@ def fetch_attom_data(
     state: str,
     zip_code: str,
     subject_sqft: float = 0,
+    subject_beds: int = 0,
 ) -> dict:
     """
     Returns dict with keys:
       fetched_avms, fetched_comps, neighborhood_sales_history,
       fetched_active_listings, attom_meta
+
+    subject_beds: used to filter comps to within 1 bed of subject.
+                  Pass 0 to skip the beds filter (backwards-compat).
     """
     addr1  = street
     addr2  = f"{city}, {state} {zip_code}"
@@ -244,8 +255,15 @@ def fetch_attom_data(
             if p.get("summary", {}).get("proptype") != "SFR":
                 continue
             entry = _extract_snapshot_entry(p)
-            if entry and _in_size_band(entry["sqft"], subject_sqft, 0.40):
-                candidates.append(entry)
+            if entry is None:
+                continue
+            if not _in_size_band(entry["sqft"], subject_sqft, 0.40):
+                continue
+            # Beds filter: skip if more than 1 bed away from subject
+            if subject_beds > 0 and entry["beds"] > 0:
+                if abs(entry["beds"] - subject_beds) > 1:
+                    continue
+            candidates.append(entry)
 
         last_candidates = candidates
         if len(candidates) >= MIN_COMP_COUNT:
@@ -257,10 +275,11 @@ def fetch_attom_data(
         used_radius = RADII[-1]
         final_comps = last_candidates
 
-    # Flag comps beyond CONF_RADIUS
+    # Flag comps beyond CONF_RADIUS with display note only (not a weight trigger)
     for e in final_comps:
-        if e["_distance_mi"] > CONF_RADIUS:
-            e["note"] = ((e.get("note") or "") + "; extended radius").lstrip("; ")
+        if e["distance_mi"] > CONF_RADIUS:
+            existing = e.get("note", "")
+            e["note"] = (existing + "; extended radius").lstrip("; ") if existing else "extended radius"
 
     # ── 5-year history ────────────────────────────────────────────────────
     hist_rows     = _fetch_snapshot_pages(p_base, used_radius, start_5yr, today)

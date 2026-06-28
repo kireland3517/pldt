@@ -57,7 +57,8 @@ def _ensure_attom_fetched(session: dict, db, session_id: str) -> dict:
         from ..services.attom import fetch_attom_data, parse_address
         street, city, state, zip_code = parse_address(addr)
         subject_sqft = float(prop.get("public_county_facts", {}).get("sqft", 0))
-        attom_data   = fetch_attom_data(street, city, state, zip_code, subject_sqft)
+        subject_beds = int(prop.get("public_county_facts", {}).get("beds", 0))
+        attom_data   = fetch_attom_data(street, city, state, zip_code, subject_sqft, subject_beds)
         updated_prop = {**prop, **attom_data, "attom_fetched": True}
         # Clear compute_result alongside the property_json update so the
         # next compute() call picks up real ATTOM data instead of serving
