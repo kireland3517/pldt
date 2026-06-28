@@ -36,3 +36,18 @@ npm start
 
 ## Deploy
 Push to GitHub. Railway auto-deploys on push. See docs/PreListing_Tool_Technical_Handoff.md for env vars.
+
+### Railway monorepo setup
+This repo has separate `backend/` and `frontend/` services.
+
+**Backend service**
+- Root Directory: `backend`
+- Config file path: `/backend/railway.toml`
+- Env vars: `SUPABASE_URL`, `SUPABASE_KEY`, `ATTOM_API_KEY` (optional)
+
+**Frontend service**
+- Root Directory: `frontend`
+- Config file path: `/frontend/railway.toml`
+- Env var: `VITE_API_URL` (set at build time)
+
+If the backend Root Directory is left at `/`, the root `/railway.toml` uses `cd backend && uvicorn ...` as a fallback.
