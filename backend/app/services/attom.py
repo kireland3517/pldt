@@ -24,10 +24,12 @@ import urllib.request
 from datetime import date, timedelta
 from pathlib import Path
 
-BASE     = "https://api.gateway.attomdata.com"
-MIN_COMP_COUNT = 3            # minimum comps; widen radius before aging comps
-RADII    = [1.0, 2.0, 3.0, 5.0]        # step through these until MIN_COMP_COUNT is met
-CONF_RADIUS = 2.0                        # comps beyond this mile get flagged lower-confidence
+BASE           = "https://api.gateway.attomdata.com"
+MIN_COMP_COUNT = 5
+RADII          = [1.0, 1.5, 2.0]
+CONF_RADIUS    = 1.0   # comps beyond this get "extended radius" note
+
+_SEED_DIR = Path(__file__).resolve().parent.parent.parent / "seed"
 
 
 def _get(path: str, params: str = "") -> dict:
@@ -217,6 +219,7 @@ def fetch_attom_data(
     subject_attom_id  = None
     subject_addr_norm = _normalize_addr(f"{street} {city} {state} {zip_code}")
     avm_as_of         = ""
+    p0: dict          = {}   # safe default; overwritten if AVM succeeds
     try:
         avm_resp = _get("/propertyapi/v1.0.0/avm/detail", p_base)
         props    = avm_resp.get("property", [])
@@ -231,42 +234,40 @@ def fetch_attom_data(
     except Exception:
         pass
 
+    # Extract ATTOM rooftop coords (primary for listings center)
+    attom_lat: float | None = None
+    attom_lon: float | None = None
+    try:
+        loc       = p0.get("location", {})
+        attom_lat = float(loc.get("latitude")  or 0) or None
+        attom_lon = float(loc.get("longitude") or 0) or None
+    except Exception:
+        pass
+
+    # RentCast AVM — second estimate; avm_avg in valuation.py averages all fetched_avms
+    rc_data = fetch_rentcast_avm(street, city, state, zip_code)
+    if rc_data.get("rc_avm"):
+        result["fetched_avms"]["rentcast"] = rc_data["rc_avm"]
+
+    # Coordinate precedence: ATTOM rooftop primary, RentCast AVM response as fallback
+    subject_lat = attom_lat or rc_data.get("rc_lat")
+    subject_lon = attom_lon or rc_data.get("rc_lon")
+
+    # RentCast active/pending listings (pending tagged; excluded from active count by callers)
+    if subject_lat and subject_lon:
+        rc_listings, rc_basis = fetch_rentcast_listings(subject_lat, subject_lon, zip_code)
+    else:
+        rc_listings, rc_basis = [], ""
+
     # ── Date windows ──────────────────────────────────────────────────────
     today      = date.today().isoformat()
     start_12mo = (date.today() - timedelta(days=365)).isoformat()
     start_5yr  = (date.today() - timedelta(days=1825)).isoformat()
 
-    # Fetch up to 100 closest SFR properties within 2.0 miles (our max radius).
-    # Properties are sorted by distance, so pages 1-10 give the closest 100.
-    nearby: list[dict] = []
-    for page in range(1, 16):
-        try:
-            resp  = _get(
-                "/propertyapi/v1.0.0/property/basicprofile",
-                f"{p_base}&radius=5.0&page={page}&pageSize=10",
-            )
-            batch = resp.get("property", [])
-            if not batch:
-                break
-            nearby.extend(batch)
-        except Exception:
-            break
-
-    # Build candidate list from all nearby properties
-    candidates: list[dict] = []
-    for p in nearby:
-        if p.get("identifier", {}).get("attomId") == subject_attom_id:
-            continue
-        if p.get("summary", {}).get("propType") != "SFR":
-            continue
-
-        entry = _extract_entry(p)
-        if entry:
-            candidates.append(entry)
-
-    # ── Step radius for comps (12-month window, comparable size) ─────────
-    used_radius  = RADII[-1]   # default to widest
-    final_comps: list[dict] = []
+    # ── Comp fetch: narrow-to-wide radius, same-zip filter ─────────────
+    used_radius              = RADII[-1]
+    final_comps: list[dict]  = []
+    last_candidates: list[dict] = []
 
     for radius in RADII:
         rows = _fetch_snapshot_pages(p_base, radius, start_12mo, today)
@@ -306,19 +307,11 @@ def fetch_attom_data(
         used_radius = RADII[-1]
         final_comps = last_candidates
 
-    # Flag comps beyond CONF_RADIUS as lower-confidence
+    # Flag comps beyond CONF_RADIUS — display only, not a weight trigger
     for e in final_comps:
-        if e["_distance_mi"] > CONF_RADIUS:
-            e["note"] = ((e.get("note") or "") + "; extended radius").lstrip("; ")
-
-    # ── Neighborhood history (5-year, looser size band, full 1.0 mi) ─────
-    comp_addresses = {e["address"] for e in final_comps}
-    history: list[dict] = [
-        e for e in candidates
-        if e["_sale_date_iso"] >= cutoff_5yr
-        and _in_size_band(e["sqft"], subject_sqft, 0.60)
-        and e["address"] not in comp_addresses
-    ]
+        if e["distance_mi"] > CONF_RADIUS:
+            existing = e.get("note", "")
+            e["note"] = (existing + "; extended radius").lstrip("; ") if existing else "extended radius"
 
     # ── 5-year history (same-zip filter applied) ──────────────────────
     hist_rows     = _fetch_snapshot_pages(p_base, used_radius, start_5yr, today)
@@ -341,8 +334,12 @@ def fetch_attom_data(
             if addr_norm not in comp_addr_set:
                 history.append(entry)
 
-    # ── Manual active listings ────────────────────────────────────────────
-    manual_listings, listings_basis = _load_manual_listings(street, city, state)
+    # ── Active listings: RentCast live feed preferred; manual seed as fallback ──
+    if rc_listings:
+        final_listings = rc_listings
+        listings_basis = rc_basis
+    else:
+        final_listings, listings_basis = _load_manual_listings(street, city, state)
 
     # ── Sort, clean, cap, assemble ────────────────────────────────────────
     def _clean(e: dict) -> dict:
@@ -353,7 +350,7 @@ def fetch_attom_data(
 
     result["fetched_comps"]              = [_clean(e) for e in final_comps[:10]]
     result["neighborhood_sales_history"] = [_clean(e) for e in history[:20]]
-    result["fetched_active_listings"]    = manual_listings
+    result["fetched_active_listings"]    = final_listings
 
     attom_meta: dict = {
         "comp_radius_miles": used_radius,
@@ -365,3 +362,96 @@ def fetch_attom_data(
     result["attom_meta"] = attom_meta
 
     return result
+
+# ── RentCast integration ──────────────────────────────────────────────────────
+
+
+def _rentcast_get(path: str, params: str = "") -> dict:
+    key = os.environ.get("RENTCAST_API_KEY", "")
+    if not key:
+        raise RuntimeError("RENTCAST_API_KEY not configured")
+    url = f"https://api.rentcast.io{path}{'?' + params if params else ''}"
+    req = urllib.request.Request(
+        url, headers={"X-Api-Key": key, "Accept": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read())
+
+
+def fetch_rentcast_avm(street: str, city: str, state: str, zip_code: str) -> dict:
+    """
+    Fetch RentCast AVM estimate.
+    Returns {"rc_avm": int, "rc_lat": float, "rc_lon": float} or {} on failure/no key.
+    Never logs or re-raises the API key.
+    """
+    if not os.environ.get("RENTCAST_API_KEY"):
+        return {}
+    try:
+        address = urllib.parse.quote(f"{street}, {city}, {state} {zip_code}")
+        resp  = _rentcast_get("/v1/avm/value", f"address={address}")
+        price = resp.get("price")
+        if not price:
+            return {}
+        out: dict = {"rc_avm": int(price)}
+        if resp.get("latitude"):
+            out["rc_lat"] = float(resp["latitude"])
+        if resp.get("longitude"):
+            out["rc_lon"] = float(resp["longitude"])
+        return out
+    except Exception:
+        return {}
+
+
+def fetch_rentcast_listings(
+    lat: float, lon: float, zip_code: str, radius_mi: float = 1.0
+) -> tuple[list[dict], str]:
+    """
+    Fetch active/pending sale listings from RentCast near (lat, lon).
+    Filters: zipCode == zip_code, propertyType in {Single Family, Townhouse},
+             status in {Active, Pending}.
+    Status is lowercased in returned rows to match manual-seed convention.
+    Pending rows are included for display but excluded from active-count stats
+    by callers via status == "active" check.
+    Returns (listings, basis_string).
+    """
+    if not os.environ.get("RENTCAST_API_KEY"):
+        return [], ""
+    try:
+        params = (
+            f"latitude={lat}&longitude={lon}"
+            f"&radius={radius_mi}&limit=500"
+        )
+        resp = _rentcast_get("/v1/listings/sale", params)
+        rows = resp if isinstance(resp, list) else resp.get("listings", [])
+        ALLOWED_TYPES    = {"Single Family", "Townhouse"}
+        ALLOWED_STATUSES = {"Active", "Pending"}
+        listings = []
+        for row in rows:
+            if row.get("zipCode") != zip_code:
+                continue
+            if row.get("propertyType") not in ALLOWED_TYPES:
+                continue
+            status = (row.get("status") or "").strip()
+            if status not in ALLOWED_STATUSES:
+                continue
+            sqft  = int(row.get("squareFootage") or 0) or None
+            beds  = int(row.get("bedrooms") or 0) or None
+            baths = float(row.get("bathrooms") or 0) or None
+            dom   = int(row.get("daysOnMarket") or 0) or None
+            listings.append({
+                "address": row.get("formattedAddress", ""),
+                "price":   int(row.get("price") or 0),
+                "sqft":    sqft,
+                "beds":    beds,
+                "baths":   baths,
+                "status":  status.lower(),
+                "dom":     dom,
+                "source":  "rentcast",
+            })
+        basis = (
+            f"RentCast active listings (aggregated public and listing data); "
+            f"fetched {date.today().isoformat()}"
+        )
+        return listings, basis
+    except Exception:
+        return [], ""
