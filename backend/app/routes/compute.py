@@ -111,6 +111,26 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
         if session_prop.get("neighborhood_sales_history"):
             prop["neighborhood_sales_history"] = session_prop["neighborhood_sales_history"]
 
+    # Always load manual listings from seed, independent of ATTOM key.
+    # If ATTOM already ran, fetched_active_listings is populated from the overlay
+    # above. If ATTOM was skipped (no key), load directly from the seed file here.
+    if not prop.get("fetched_active_listings"):
+        try:
+            from ..services.attom import _load_manual_listings, parse_address
+            _addr = prop.get("address", "")
+            if _addr:
+                _street, _city, _state, _ = parse_address(_addr)
+                _manual, _basis = _load_manual_listings(_street, _city, _state)
+                if _manual:
+                    prop["fetched_active_listings"] = _manual
+                    if _basis:
+                        _meta = dict(prop.get("attom_meta") or {})
+                        if not _meta.get("active_listings_basis"):
+                            _meta["active_listings_basis"] = _basis
+                            prop["attom_meta"] = _meta
+        except Exception:
+            pass
+
     instance     = session["instance_json"]
     listing_month = session.get("listing_month", 6)
     seller_inputs = session.get("seller_inputs") or {}
@@ -272,31 +292,4 @@ def update_inputs(session_id: str, body: InputsUpdate):
 
 
 @router.post("/{session_id}/refetch-market-data")
-def refetch_market_data(session_id: str):
-    """
-    Clear cached ATTOM data so the next compute() call re-fetches fresh
-    market data from ATTOM.  Never touches instance_json (tags/conditions).
-    """
-    db = get_db()
-
-    row = db.table(TABLE).select("*").eq("id", session_id).maybe_single().execute()
-    if not row.data:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
-
-    prop = row.data.get("property_json") or {}
-    attom_keys = {
-        "attom_fetched", "fetched_avms", "fetched_comps",
-        "fetched_active_listings", "neighborhood_sales_history", "attom_meta",
-    }
-    cleaned_prop = {k: v for k, v in prop.items() if k not in attom_keys}
-
-    db.table(TABLE).update({
-        "property_json":  cleaned_prop,
-        "compute_result": None,
-    }).eq("id", session_id).execute()
-
-    return {
-        "ok":        True,
-        "session_id": session_id,
-        "message":   "Market data cleared. Re-run compute to fetch fresh ATTOM data.",
-    }
+de

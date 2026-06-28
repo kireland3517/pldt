@@ -431,7 +431,7 @@ def generate_large_pdf(
         for l in active_listings:
             sqft = l.get("sqft")
             ppsf = f"${round(l['list_price']/sqft)}" if sqft else "—"
-            status_style = "pend" if l.get("status") == "Pending" else "act"
+            status_style = "pend" if l.get("status", "").lower() == "pending" else "act"
             story += _block(l.get("address","—"), [
                 ("List Price", _neutral_amt(l.get("list_price"))),
                 ("$/sqft",     _p(ppsf)),
@@ -608,4 +608,4 @@ def get_large_pdf(session_id: str, req: LargePDFRequest):
     raw   = (session.get("address") or "report").replace(",","").replace(" ","-")
     fname = f"pldt-{raw[:40]}-large-print.pdf"
     return Response(content=pdf_bytes, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+                    headers={"Content-Disposition": f'attachment; filename="

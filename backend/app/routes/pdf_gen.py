@@ -456,7 +456,7 @@ def generate_pdf(
             sqft = l.get("sqft")
             ppsf = f"${round(l['list_price']/sqft)}" if sqft else "—"
             baba = f"{l.get('beds','?')}/{l.get('baths','?')}"
-            status_style = "rsn" if l.get("status") == "Pending" else "vret"
+            status_style = "rsn" if l.get("status", "").lower() == "pending" else "vret"
             al_data.append([
                 _p(l.get("address","—"), "n"),
                 _neutral_amt(l.get("list_price")),
@@ -722,5 +722,4 @@ def get_pdf(session_id: str, req: PDFRequest):
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-    )
+        headers={"Content-Disposition": f'attachment; filename="{fname
