@@ -722,4 +722,5 @@ def get_pdf(session_id: str, req: PDFRequest):
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{fname
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )

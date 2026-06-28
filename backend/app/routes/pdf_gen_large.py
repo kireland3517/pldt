@@ -608,4 +608,4 @@ def get_large_pdf(session_id: str, req: LargePDFRequest):
     raw   = (session.get("address") or "report").replace(",","").replace(" ","-")
     fname = f"pldt-{raw[:40]}-large-print.pdf"
     return Response(content=pdf_bytes, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
