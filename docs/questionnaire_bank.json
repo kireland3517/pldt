@@ -1,0 +1,702 @@
+{
+  "_meta": {
+    "version": "2.0-standards-based",
+    "backbone_sources": [
+      "SC Residential Property Condition Disclosure Statement (SCR230) - 8 disclosure areas",
+      "InterNACHI International Standards of Practice 3.1-3.10 - inspection coverage"
+    ],
+    "design_rules": [
+      "General and blind: questions derive from national/state standards, not any specific property.",
+      "Presence first (does the home have it), then condition (assess what's present), then seller-knowledge disclosures, then constraints.",
+      "Photos pre-fill presence and a condition draft; questions confirm and fill what photos cannot see.",
+      "Any scope-unknown condition answered 'unsure' resolves to 'inspect', never a fabricated cost.",
+      "Seller language only. No component_ids shown to the seller.",
+      "Cosmetic upgrades (dated fixtures, pulls, paint, curb appeal) are captured as discretionary 'upgrade' items, not defects. They are among the highest-ROI seller moves and must be offered, never Floor.",
+      "No question prompt contains 'only if you have one'. Presence gates reveal child questions. Where a gate is imperfect, the answer set includes a real 'Doesn't apply' option instead of caveat text."
+    ]
+  },
+  "presence_questions": [
+    {
+      "id": "P-ROOF",
+      "internachi": "3.1 Roof",
+      "prompt": "Roughly how old is the roof, and is it the original roof?",
+      "type": "single_select",
+      "options": [
+        "0-5 yrs",
+        "6-15 yrs",
+        "15+ yrs",
+        "unsure"
+      ],
+      "maps_to": "ROOF-01"
+    },
+    {
+      "id": "P-FOUNDATION",
+      "internachi": "3.3 Basement/Foundation/Crawlspace",
+      "prompt": "What does the home sit on?",
+      "type": "single_select",
+      "options": [
+        "crawlspace",
+        "basement",
+        "slab",
+        "unsure"
+      ],
+      "maps_to": "FND-01"
+    },
+    {
+      "id": "P-DECK",
+      "internachi": "3.2 Exterior (decks/porches)",
+      "prompt": "Is there a deck, raised porch, or balcony?",
+      "type": "yes_no",
+      "maps_to": "DECK-01"
+    },
+    {
+      "id": "P-PORCH",
+      "internachi": "3.2 Exterior (steps/railings)",
+      "prompt": "Is there a front porch or exterior stairs with railings?",
+      "type": "yes_no",
+      "maps_to": "PRCH-01"
+    },
+    {
+      "id": "P-GARAGE",
+      "internachi": "3.2 Exterior",
+      "prompt": "Is there a garage with a powered door?",
+      "type": "yes_no",
+      "maps_to": "GAR-01"
+    },
+    {
+      "id": "P-GUTTERS",
+      "internachi": "3.2 Exterior",
+      "prompt": "Are there gutters on the home?",
+      "type": "single_select",
+      "options": [
+        "yes",
+        "no"
+      ],
+      "maps_to": "GUT-01"
+    },
+    {
+      "id": "P-FIREPLACE",
+      "internachi": "3.8 Fireplace",
+      "prompt": "Is there a fireplace?",
+      "type": "yes_no",
+      "maps_to": "FIRE-01"
+    },
+    {
+      "id": "P-HVAC-AGE",
+      "internachi": "3.4/3.5 Heating/Cooling",
+      "prompt": "Roughly how old is the heating and cooling system?",
+      "type": "single_select",
+      "options": [
+        "0-5 yrs",
+        "6-12 yrs",
+        "12+ yrs",
+        "unsure"
+      ],
+      "maps_to": "HVAC-01"
+    },
+    {
+      "id": "P-WH-AGE",
+      "internachi": "3.6 Plumbing (water heater)",
+      "prompt": "Roughly how old is the water heater?",
+      "type": "single_select",
+      "options": [
+        "0-5 yrs",
+        "6-12 yrs",
+        "12+ yrs",
+        "unsure"
+      ],
+      "maps_to": "WH-HTR-01"
+    },
+    {
+      "id": "P-BATHS",
+      "internachi": "3.6 Plumbing",
+      "prompt": "How many bathrooms, and which is the primary?",
+      "type": "single_select",
+      "options": [
+        "1",
+        "2",
+        "3+"
+      ],
+      "maps_to": [
+        "BTHP-01",
+        "BTHS-01"
+      ]
+    },
+    {
+      "id": "P-WATER-SEWER",
+      "internachi": "SC Disclosure I (Water/Sewage)",
+      "prompt": "Is the home on public water and sewer, or a well and/or septic system?",
+      "type": "single_select",
+      "options": [
+        "public water + sewer",
+        "well",
+        "septic",
+        "well + septic",
+        "unsure"
+      ],
+      "maps_to": "PLMB-01"
+    }
+  ],
+  "condition_questions": [
+    {
+      "id": "Q-ROOF",
+      "triggers": "ROOF-01 present",
+      "internachi": "3.1",
+      "prompt": "Any roof leaks, water stains on ceilings, or missing/curling shingles?",
+      "type": "single_select",
+      "options": [
+        "no issues",
+        "minor/cosmetic",
+        "active leak or stains",
+        "unsure"
+      ],
+      "branches": {
+        "active leak or stains": "floor_candidate_lender",
+        "unsure": "inspect"
+      },
+      "maps_to": "ROOF-01"
+    },
+    {
+      "id": "Q-FND",
+      "triggers": "FND-01 present",
+      "internachi": "3.3",
+      "prompt": "In the crawlspace or basement, is there standing water, dampness, a musty smell, or visible cracks?",
+      "type": "single_select",
+      "options": [
+        "dry, no issues",
+        "some dampness/smell",
+        "standing water or cracks",
+        "cannot access / unsure"
+      ],
+      "branches": {
+        "standing water or cracks": "floor_candidate_lender",
+        "cannot access / unsure": "inspect",
+        "some dampness/smell": "inspect"
+      },
+      "maps_to": "FND-01"
+    },
+    {
+      "id": "Q-SIDING",
+      "triggers": "SID-01 present",
+      "internachi": "3.2",
+      "prompt": "Is the siding damaged, rotted, or showing gaps where water could get in?",
+      "type": "single_select",
+      "options": [
+        "good",
+        "cosmetic wear",
+        "damage/rot",
+        "unsure"
+      ],
+      "branches": {
+        "unsure": "inspect"
+      },
+      "maps_to": "SID-01"
+    },
+    {
+      "id": "Q-DECK",
+      "triggers": "DECK-01 present",
+      "internachi": "3.2",
+      "prompt": "On the deck, are any boards soft or rotted, railings loose, or gaps between stair risers?",
+      "type": "single_select",
+      "options": [
+        "solid",
+        "cosmetic wear",
+        "soft boards / loose rail / open risers",
+        "unsure"
+      ],
+      "branches": {
+        "soft boards / loose rail / open risers": "floor_candidate_safety_lender",
+        "unsure": "inspect"
+      },
+      "maps_to": "DECK-01"
+    },
+    {
+      "id": "Q-PRCH",
+      "triggers": "PRCH-01 present OR DECK-01 present",
+      "internachi": "3.2",
+      "prompt": "On porch or exterior stairs, are handrails loose or missing, or steps uneven?",
+      "type": "single_select",
+      "options": [
+        "secure",
+        "minor",
+        "loose/missing handrail or uneven steps"
+      ],
+      "branches": {
+        "loose/missing handrail or uneven steps": "floor_candidate_safety"
+      },
+      "maps_to": "PRCH-01"
+    },
+    {
+      "id": "Q-HVAC",
+      "triggers": "HVAC-01 present",
+      "internachi": "3.4/3.5",
+      "prompt": "Does the heating and cooling both run and keep the home comfortable?",
+      "type": "single_select",
+      "options": [
+        "both work well",
+        "weak/uneven",
+        "one or both not working",
+        "unsure"
+      ],
+      "branches": {
+        "one or both not working": "floor_candidate_lender",
+        "unsure": "inspect"
+      },
+      "maps_to": "HVAC-01"
+    },
+    {
+      "id": "Q-PLMB",
+      "triggers": "PLMB-01 present",
+      "internachi": "3.6",
+      "prompt": "Any active leaks, low water pressure, slow drains, or a water heater that leaks or runs out fast?",
+      "type": "single_select",
+      "options": [
+        "no issues",
+        "minor",
+        "active leak / no hot water",
+        "unsure"
+      ],
+      "branches": {
+        "active leak / no hot water": "floor_candidate_lender",
+        "unsure": "inspect"
+      },
+      "maps_to": [
+        "PLMB-01",
+        "WH-HTR-01"
+      ]
+    },
+    {
+      "id": "Q-ELEC",
+      "triggers": "ELEC-01 present",
+      "internachi": "3.7",
+      "prompt": "Near the panel or in the attic, do you see exposed wires, open boxes without covers, or missing outlet/switch cover plates? (Visible signs only.)",
+      "type": "single_select",
+      "options": [
+        "none visible",
+        "some missing covers",
+        "exposed wires / open boxes",
+        "cannot access / unsure"
+      ],
+      "branches": {
+        "exposed wires / open boxes": "floor_candidate_safety_lender",
+        "some missing covers": "floor_candidate_safety",
+        "cannot access / unsure": "inspect"
+      },
+      "maps_to": "ELEC-01",
+      "note": "Hidden junction boxes are not seller-visible. This catches visible signs; an inspection catches the rest. Confidence flagged lower without inspection."
+    },
+    {
+      "id": "Q-DET",
+      "triggers": "always_ask",
+      "internachi": "3.7",
+      "prompt": "Are there working smoke detectors on every level, and a carbon monoxide detector?",
+      "type": "single_select",
+      "options": [
+        "yes, working",
+        "some missing or old",
+        "none"
+      ],
+      "branches": {
+        "none": "floor_candidate_safety_lender",
+        "some missing/old": "floor_candidate_safety"
+      },
+      "maps_to": "DET-01"
+    },
+    {
+      "id": "Q-OUT",
+      "internachi": "3.7",
+      "prompt": "Are outdoor electrical outlets missing cover plates or not GFCI-protected?",
+      "type": "single_select",
+      "options": [
+        "all covered and GFCI",
+        "some missing covers",
+        "none / unsure"
+      ],
+      "maps_to": "OUT-01",
+      "triggers": "always_ask",
+      "branches": {
+        "none / unsure": "floor_candidate_safety",
+        "some missing covers": "floor_candidate_safety"
+      }
+    },
+    {
+      "id": "Q-WIN",
+      "triggers": "WIN-01 present",
+      "internachi": "3.10",
+      "prompt": "Any cracked panes, windows that won't open/lock, or broken seals (foggy glass)?",
+      "type": "single_select",
+      "options": [
+        "all fine",
+        "minor",
+        "cracked/broken/won't operate"
+      ],
+      "branches": {},
+      "maps_to": "WIN-01",
+      "note": "Cracked pane is floor-eligible only in a safety-glazing location (door, stairwell, wet area); otherwise discretionary."
+    },
+    {
+      "id": "Q-GAR",
+      "triggers": "GAR-01 present",
+      "internachi": "3.2",
+      "prompt": "Does the garage door open and close normally on its own power?",
+      "type": "single_select",
+      "options": [
+        "works normally",
+        "works but damaged",
+        "does not work"
+      ],
+      "branches": {
+        "does not work": "floor_candidate_safety_lender_replace",
+        "works but damaged": "floor_candidate_assess"
+      },
+      "maps_to": "GAR-01"
+    },
+    {
+      "id": "Q-GUT",
+      "internachi": "3.2",
+      "prompt": "Are any gutters clogged, sagging, or pulling away from the fascia?",
+      "type": "single_select",
+      "options": [
+        "no issues",
+        "minor/clogged",
+        "sagging or pulling away",
+        "unsure"
+      ],
+      "maps_to": "GUT-01",
+      "triggers": "GUT-01 present",
+      "branches": {
+        "sagging or pulling away": "floor_candidate_lender",
+        "unsure": "inspect"
+      }
+    },
+    {
+      "id": "Q-FIRE",
+      "triggers": "FIRE-01 present",
+      "internachi": "3.8",
+      "prompt": "Does the fireplace work, and has the chimney/flue been serviced?",
+      "type": "single_select",
+      "options": [
+        "works, serviced",
+        "works, not recently serviced",
+        "does not work / unsure"
+      ],
+      "branches": {
+        "does not work / unsure": "inspect"
+      },
+      "maps_to": "FIRE-01"
+    },
+    {
+      "id": "Q-INTERIOR",
+      "triggers": "PNT-01 present",
+      "internachi": "3.10",
+      "prompt": "Inside, is there heavy odor (smoke/pet), staining, or damage to walls/ceilings?",
+      "type": "single_select",
+      "options": [
+        "clean",
+        "minor wear",
+        "heavy odor or staining"
+      ],
+      "branches": {
+        "heavy odor or staining": "remediation_and_duct_floor"
+      },
+      "maps_to": [
+        "PNT-01",
+        "REM-01",
+        "DUCT-01"
+      ],
+      "note": "Heavy smoke/odor triggers REM-01 (remediation) and DUCT-01 (duct cleaning) together."
+    },
+    {
+      "id": "Q-FLR",
+      "triggers": "FLR-01 present",
+      "internachi": "3.10",
+      "prompt": "Is the flooring worn, damaged, or dated enough that you'd expect a buyer to want it redone?",
+      "type": "single_select",
+      "options": [
+        "good",
+        "some wear",
+        "worn/damaged/dated"
+      ],
+      "branches": {},
+      "maps_to": "FLR-01"
+    },
+    {
+      "id": "Q-KIT",
+      "triggers": "KIT-01 present",
+      "internachi": "3.10",
+      "prompt": "Is the kitchen dated or worn (cabinets, counters, fixtures)? This is your judgment, not a defect.",
+      "type": "single_select",
+      "options": [
+        "updated",
+        "somewhat dated",
+        "very dated"
+      ],
+      "branches": {},
+      "maps_to": "KIT-01",
+      "note": "Datedness is a value/discretionary judgment vision can't make; ask the seller."
+    },
+    {
+      "id": "Q-BATH",
+      "triggers": "BTHP-01 present",
+      "internachi": "3.10",
+      "prompt": "Are the bathrooms dated, or is anything loose, leaking, or pulling away from the wall (vanity, toilet, tile)?",
+      "type": "single_select",
+      "options": [
+        "fine",
+        "dated",
+        "loose/leaking/separating"
+      ],
+      "branches": {},
+      "maps_to": [
+        "BTHP-01",
+        "BTHS-01"
+      ],
+      "note": "Catches the dated-and-separating-vanity case vision misses."
+    }
+  ],
+  "disclosure_questions": [
+    {
+      "id": "D-WATER",
+      "sc_area": "I. Water Supply & Sanitary Sewage",
+      "prompt": "Any known problems with water supply, well, septic, or sewer?",
+      "type": "yes_no_describe",
+      "maps_to": "PLMB-01"
+    },
+    {
+      "id": "D-ROOF-STRUCT",
+      "sc_area": "II. Roof & Structural",
+      "prompt": "Any known roof, foundation, or structural problems, past or present?",
+      "type": "yes_no_describe",
+      "maps_to": [
+        "ROOF-01",
+        "FND-01"
+      ]
+    },
+    {
+      "id": "D-PLMB-ELEC-HVAC",
+      "sc_area": "III. Plumbing/Electrical/HVAC",
+      "prompt": "Any known problems with plumbing, electrical, heating, or cooling systems?",
+      "type": "yes_no_describe",
+      "maps_to": [
+        "PLMB-01",
+        "ELEC-01",
+        "HVAC-01"
+      ]
+    },
+    {
+      "id": "D-INFESTATION",
+      "sc_area": "IV. Wood-destroying insects/CL-100",
+      "prompt": "Any known termite or wood-destroying insect activity or damage?",
+      "type": "yes_no_describe",
+      "maps_to": "FND-01",
+      "note": "Relevant to SC CL-100 letter."
+    },
+    {
+      "id": "D-ENVIRONMENTAL",
+      "sc_area": "VI. Environmental/Hazardous",
+      "prompt": "Any known environmental issues: mold, asbestos, lead paint, radon, methamphetamine production, or other contamination?",
+      "type": "yes_no_describe",
+      "maps_to": "REM-01",
+      "note": "SC disclosure explicitly lists these; meth/mold/lead can be sale-blocking and disclosure-mandatory."
+    },
+    {
+      "id": "D-HOA",
+      "sc_area": "V. HOA / Restrictions",
+      "prompt": "Is the property in an HOA or subject to covenants or restrictions? If so, are there dues or pending assessments?",
+      "type": "yes_no_describe",
+      "maps_to": "_closing_hoa",
+      "note": "Drives the HOA estoppel/transfer fee in net proceeds."
+    }
+  ],
+  "constraints_questions": [
+    {
+      "id": "C-PAYOFF-PRIMARY",
+      "prompt": "Roughly what's left on your primary mortgage?",
+      "type": "currency",
+      "maps_to": "payoff_primary"
+    },
+    {
+      "id": "C-PAYOFF-SECOND",
+      "prompt": "Any second mortgage or HELOC balance? (Enter 0 if none.)",
+      "type": "currency",
+      "maps_to": "payoff_secondary"
+    },
+    {
+      "id": "C-PAYOFF-LIENS",
+      "prompt": "Any liens, unpaid property taxes, or contractor bills against the home? (Enter 0 if none.)",
+      "type": "currency",
+      "maps_to": "payoff_liens"
+    },
+    {
+      "id": "C-PAYUP",
+      "prompt": "Could you pay for pre-listing repairs up front?",
+      "type": "yes_no",
+      "branches": {
+        "no": "ask_finance"
+      },
+      "maps_to": "pay_up_front"
+    },
+    {
+      "id": "C-FINANCE",
+      "triggers": "C-PAYUP = no",
+      "prompt": "Would you be prepared to finance the repairs (loan or credit)?",
+      "type": "yes_no",
+      "branches": {
+        "no": "strong_recommendation_mode"
+      },
+      "maps_to": "can_finance"
+    },
+    {
+      "id": "C-TIMELINE",
+      "prompt": "How soon do you need to sell?",
+      "type": "single_select",
+      "options": [
+        "ASAP",
+        "within a few months",
+        "flexible"
+      ],
+      "maps_to": "timeline"
+    },
+    {
+      "id": "C-CREDITS",
+      "prompt": "Do you already expect to offer any buyer credits or concessions? (Optional, enter 0 if none.)",
+      "type": "currency",
+      "maps_to": "seller_credits"
+    },
+    {
+      "id": "C-OTHER-COSTS",
+      "prompt": "Any other seller costs you want included (moving, staging, extra attorney work)? (Optional.)",
+      "type": "currency",
+      "maps_to": "other_seller_costs"
+    }
+  ],
+  "_branch_targets": {
+    "floor_candidate_safety": "Stage as safety-eligible Floor candidate; requires explicit seller confirmation before writing to Floor.",
+    "floor_candidate_lender": "Stage as lender-eligible Floor candidate; requires explicit seller confirmation.",
+    "floor_candidate_safety_lender": "Stage as both; requires explicit seller confirmation.",
+    "floor_candidate_safety_lender_replace": "Stage as Floor candidate AND set default action to replace (failed component), pending confirmation.",
+    "floor_candidate_assess": "Stage for assessment; not auto-Floor.",
+    "remediation_and_duct_floor": "Stage REM-01 and DUCT-01 together as essential-when-detected Floor candidates, pending confirmation.",
+    "inspect": "Resolve to 'inspect' action: show as 'get this checked before deciding', exclude from plan cost totals, do not fabricate a cost.",
+    "ask_finance": "Route to C-FINANCE.",
+    "strong_recommendation_mode": "Seller can neither pay nor finance: switch output to Floor-only strong recommendation framing.",
+    "constraints_note": "Never present payoff/constraints as costs 'coming out of the sale'. They size feasibility, not deductions from a number the seller sees as theirs.",
+    "upgrade_candidate": "Stage as a DISCRETIONARY upgrade (work_type=upgrade), not a defect and never Floor. Priced as a low-cost refresh with its own recoup %. Seller chooses whether to include."
+  },
+  "cosmetic_upgrade_questions": [
+    {
+      "id": "U-KIT-FIX",
+      "triggers": "KIT-01 present",
+      "internachi": "3.10 (cosmetic)",
+      "prompt": "Kitchen: are the cabinet pulls, faucet, and light fixtures dated or builder-basic? (Cheap to refresh, often high return.)",
+      "type": "single_select",
+      "options": [
+        "modern/updated",
+        "basic but fine",
+        "dated/builder-grade"
+      ],
+      "branches": {
+        "dated/builder-grade": "upgrade_candidate"
+      },
+      "maps_to": "KIT-01",
+      "work_type": "upgrade"
+    },
+    {
+      "id": "U-BATH-FIX",
+      "triggers": "BTHP-01 present",
+      "internachi": "3.10 (cosmetic)",
+      "prompt": "Bathrooms: are the faucets, lighting, mirror, and hardware dated or builder-basic?",
+      "type": "single_select",
+      "options": [
+        "modern/updated",
+        "basic but fine",
+        "dated/builder-grade"
+      ],
+      "branches": {
+        "dated/builder-grade": "upgrade_candidate"
+      },
+      "maps_to": [
+        "BTHP-01",
+        "BTHS-01"
+      ],
+      "work_type": "upgrade"
+    },
+    {
+      "id": "U-LIGHT",
+      "triggers": "ILT-01 present",
+      "internachi": "3.10 (cosmetic)",
+      "prompt": "Throughout the home, are light fixtures dated (brass, bowl lights, etc.)?",
+      "type": "single_select",
+      "options": [
+        "updated",
+        "mixed",
+        "mostly dated"
+      ],
+      "branches": {
+        "mostly dated": "upgrade_candidate"
+      },
+      "maps_to": "ILT-01",
+      "work_type": "upgrade"
+    },
+    {
+      "id": "U-PAINT",
+      "triggers": "PNT-01 present",
+      "internachi": "3.10 (cosmetic)",
+      "prompt": "Are interior wall colors dated or bold enough that neutral paint would help it show better?",
+      "type": "single_select",
+      "options": [
+        "neutral/current",
+        "some rooms",
+        "dated/bold throughout"
+      ],
+      "branches": {
+        "dated/bold throughout": "upgrade_candidate",
+        "some rooms": "upgrade_candidate"
+      },
+      "maps_to": "PNT-01",
+      "work_type": "upgrade"
+    },
+    {
+      "id": "U-HARDWARE",
+      "triggers": "IDR-01 present",
+      "internachi": "3.10 (cosmetic)",
+      "prompt": "Are interior door handles and cabinet/door hardware dated or mismatched?",
+      "type": "single_select",
+      "options": [
+        "updated",
+        "fine",
+        "dated/mismatched"
+      ],
+      "branches": {
+        "dated/mismatched": "upgrade_candidate"
+      },
+      "maps_to": [
+        "IDR-01",
+        "IHW-01"
+      ],
+      "work_type": "upgrade"
+    },
+    {
+      "id": "U-CURB",
+      "triggers": "always_ask",
+      "internachi": "3.2 (cosmetic)",
+      "prompt": "Curb appeal: would the entry, paint, or landscaping benefit from a low-cost refresh (front door color, mulch, pressure wash)?",
+      "type": "single_select",
+      "options": [
+        "already strong",
+        "could use a little",
+        "needs work"
+      ],
+      "branches": {
+        "needs work": "upgrade_candidate",
+        "could use a little": "upgrade_candidate"
+      },
+      "maps_to": [
+        "XDR-01",
+        "LAND-01",
+        "PWASH-01"
+      ],
+      "work_type": "upgrade"
+    }
+  ]
+}

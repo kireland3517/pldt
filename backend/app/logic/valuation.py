@@ -4,10 +4,18 @@ valuation.py — computes the as-is range from size-adjusted comps.
 BLIND RULE: the as-is range is COMPUTED here from fetched comps and AVMs.
 It must never be loaded from validation/.
 
-Algorithm (v2 — WLS with Gaussian size-band weights):
-  1. Weight each comp by proximity to subject sqft using a Gaussian kernel.
-     bandwidth = max(150, 0.10 * subject_sqft).
-     Newer-build comps get an additional 0.5x penalty.
+Algorithm (v3 — WLS with Gaussian size + distance weights):
+  1. Weight each comp by two independent Gaussians, multiplied together:
+       size_w  = exp(-0.5 * ((comp_sqft - subject_sqft) / bw_sqft)^2)
+                 bw_sqft = max(150, 0.10 * subject_sqft)
+       dist_w  = exp(-0.5 * (distance_mi / 0.75)^2)
+                 bandwidth 0.75 mi => 1.0 mi edge ~ 41% weight,
+                 1.5 mi ~ 14%, 2.0 mi ~ 3% (cross-submarket suppressed)
+     Combined weight = size_w * dist_w * newer_penalty
+     newer_penalty = 0.5 when comp["is_newer_build"] is True, else 1.0.
+     NOTE: "note" field is display text only and is NOT used as a weight
+     trigger. Extended-radius comps carry note="extended radius" but their
+     distance is already penalized by dist_w; no double-penalty.
   2. Fit WLS: price_per_sqft = a + b*sqft using weighted OLS.
   3. Predict ppsf at subject sqft -> size-adjusted midpoint.
   4. Spread = max(weighted sigma x sqft, $5k). Round to $100.
@@ -15,9 +23,11 @@ Algorithm (v2 — WLS with Gaussian size-band weights):
   6. If comp-derived mid and AVM avg diverge >8%, widen range and
      lower confidence by 0.10.
 
-Bandwidth choice: max(150, 0.10 * sqft) — proportional rule that
-generalizes across house sizes. Comps >200 sqft away lose influence
-rapidly; closest-size comps dominate without hard cutoffs.
+Bandwidth choices:
+  sqft: max(150, 10% of subject sqft) — proportional, generalizes across
+        house sizes; comps >200 sqft away lose influence rapidly.
+  dist: 0.75 mi fixed — comps at target edge (1 mi) retain 41% weight;
+        comps at 1.5 mi retain 14%; at 2 mi retain 3%.
 """
 
 from __future__ import annotations
@@ -57,18 +67,28 @@ def _weighted_sigma(xs, ys, ws, a, b) -> float:
 
 def _comp_weights(comps: list, subject_sqft: float) -> List[float]:
     """
-    Gaussian size-proximity weight x newer-build penalty.
-    bandwidth = max(150, 10% of subject sqft).
-    Proportional rule generalizes across house sizes; comps >200 sqft away
-    lose influence rapidly so closest-size comps dominate.
+    Combined weight = size_w * dist_w * newer_penalty.
+
+    size_w:        Gaussian on (comp_sqft - subject_sqft), bw = max(150, 10% sqft).
+    dist_w:        Gaussian on distance_mi, bw = 0.75 mi.
+                   Missing distance treated as 0 (full weight) for backwards compat.
+    newer_penalty: 0.5 when comp["is_newer_build"] is True, else 1.0.
+                   Keyed on the explicit boolean, NOT on "note" presence, so that
+                   "extended radius" display text does not trigger this penalty.
     """
-    bw = max(150.0, 0.10 * subject_sqft)
+    bw_sqft = max(150.0, 0.10 * subject_sqft)
+    bw_dist = 0.75
     weights = []
     for c in comps:
-        dist = float(c["sqft"]) - subject_sqft
-        size_w = math.exp(-0.5 * (dist / bw) ** 2)
-        newer_penalty = 0.5 if "note" in c else 1.0
-        weights.append(size_w * newer_penalty)
+        sqft_diff = float(c["sqft"]) - subject_sqft
+        size_w    = math.exp(-0.5 * (sqft_diff / bw_sqft) ** 2)
+
+        dist_mi   = float(c.get("distance_mi") or 0)
+        dist_w    = math.exp(-0.5 * (dist_mi / bw_dist) ** 2)
+
+        newer_penalty = 0.5 if c.get("is_newer_build") is True else 1.0
+
+        weights.append(size_w * dist_w * newer_penalty)
     return weights
 
 
@@ -120,7 +140,7 @@ def compute_as_is_range(property_inputs: dict) -> dict:
             )
 
     notes.append("MLS-only metrics (precise DOM, sale-to-list) unavailable in v1.")
-    if any("note" in c for c in comps):
+    if any(c.get("is_newer_build") for c in comps):
         notes.append("One or more comps down-weighted as newer or atypical build.")
 
     Sxx_w = sum(ws[i] * (xs[i] - mx_w) ** 2 for i in range(len(xs)))
@@ -130,17 +150,19 @@ def compute_as_is_range(property_inputs: dict) -> dict:
         resid     = ys[i] - pred_ppsf
         hat = ws[i] * (xs[i] - mx_w) ** 2 / Sxx_w + ws[i] / sw if Sxx_w > 0 else 0
         comp_detail.append({
-            "address":       c.get("address", f"comp{i+1}"),
-            "sqft":          xs[i],
-            "price":         float(c["price"]),
-            "actual_ppsf":   round(ys[i], 2),
-            "pred_ppsf":     round(pred_ppsf, 2),
-            "residual_ppsf": round(resid, 4),
-            "residual_$":    round(resid * xs[i], 0),
-            "weight":        round(ws[i], 4),
-            "leverage":      round(hat, 4),
-            "note":          c.get("note", ""),
-            "sold":          c.get("sold", ""),
+            "address":        c.get("address", f"comp{i+1}"),
+            "sqft":           xs[i],
+            "price":          float(c["price"]),
+            "distance_mi":    c.get("distance_mi"),
+            "is_newer_build": c.get("is_newer_build", False),
+            "actual_ppsf":    round(ys[i], 2),
+            "pred_ppsf":      round(pred_ppsf, 2),
+            "residual_ppsf":  round(resid, 4),
+            "residual_$":     round(resid * xs[i], 0),
+            "weight":         round(ws[i], 4),
+            "leverage":       round(hat, 4),
+            "note":           c.get("note", ""),
+            "sold":           c.get("sold", ""),
         })
 
     bw_used = max(150.0, 0.10 * subject_sqft)
@@ -157,7 +179,8 @@ def compute_as_is_range(property_inputs: dict) -> dict:
         "regression":     {
             "a":                    round(a, 4),
             "b":                    round(b, 6),
-            "bandwidth":            round(bw_used, 0),
+            "bandwidth_sqft":       round(bw_used, 0),
+            "bandwidth_dist_mi":    0.75,
             "weighted_mean_sqft":   round(mx_w, 0),
         },
     }

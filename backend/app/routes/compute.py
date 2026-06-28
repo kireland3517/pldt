@@ -57,7 +57,8 @@ def _ensure_attom_fetched(session: dict, db, session_id: str) -> dict:
         from ..services.attom import fetch_attom_data, parse_address
         street, city, state, zip_code = parse_address(addr)
         subject_sqft = float(prop.get("public_county_facts", {}).get("sqft", 0))
-        attom_data   = fetch_attom_data(street, city, state, zip_code, subject_sqft)
+        subject_beds = int(prop.get("public_county_facts", {}).get("beds", 0))
+        attom_data   = fetch_attom_data(street, city, state, zip_code, subject_sqft, subject_beds)
         updated_prop = {**prop, **attom_data, "attom_fetched": True}
         # Clear compute_result alongside the property_json update so the
         # next compute() call picks up real ATTOM data instead of serving
@@ -85,7 +86,7 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
     if property_key:
         try:
             prop = load_property_inputs(property_key)
-        except FileNotFoundError:
+        except (FileNotFoundError, ValueError):
             prop = session.get("property_json") or {}
     else:
         prop = session.get("property_json") or {}
@@ -103,12 +104,39 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
             "neighborhood_sales_history": session_prop.get("neighborhood_sales_history") or [],
             "attom_meta":                 session_prop.get("attom_meta") or {},
         }
+    elif session_prop.get("fetched_comps"):
+        # Session has comps without full attom_fetched flag — prefer them over empty seed arrays
+        prop["fetched_comps"] = session_prop["fetched_comps"]
+        if session_prop.get("fetched_avms"):
+            prop["fetched_avms"] = session_prop["fetched_avms"]
+        if session_prop.get("neighborhood_sales_history"):
+            prop["neighborhood_sales_history"] = session_prop["neighborhood_sales_history"]
 
-    instance     = session["instance_json"]
+    # Always load manual listings from seed, independent of ATTOM key.
+    # If ATTOM already ran, fetched_active_listings is populated from the overlay
+    # above. If ATTOM was skipped (no key), load directly from the seed file here.
+    if not prop.get("fetched_active_listings"):
+        try:
+            from ..services.attom import _load_manual_listings, parse_address
+            _addr = prop.get("address", "")
+            if _addr:
+                _street, _city, _state, _ = parse_address(_addr)
+                _manual, _basis = _load_manual_listings(_street, _city, _state)
+                if _manual:
+                    prop["fetched_active_listings"] = _manual
+                    if _basis:
+                        _meta = dict(prop.get("attom_meta") or {})
+                        if not _meta.get("active_listings_basis"):
+                            _meta["active_listings_basis"] = _basis
+                            prop["attom_meta"] = _meta
+        except Exception:
+            pass
+
+    instance      = session["instance_json"]
     listing_month = session.get("listing_month", 6)
     seller_inputs = session.get("seller_inputs") or {}
     commission_rate = session.get("commission_rate") or 0.06
-    has_hoa      = session.get("has_hoa", False)
+    has_hoa       = session.get("has_hoa", False)
 
     if not prop:
         raise HTTPException(status_code=422, detail="Session has no property_json. Re-create session.")
@@ -119,14 +147,13 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
     try:
         val = compute_as_is_range(prop)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Valuation failed: {exc}. "
-                "No recent comparable sales were found — ATTOM market data "
-                "may not be available yet. Try again in a moment."
-            ),
-        )
+        attom_key_set = bool(os.environ.get("ATTOM_API_KEY"))
+        detail = f"Valuation failed: {exc}. "
+        if not attom_key_set:
+            detail += "ATTOM_API_KEY is not set — add it to the Railway backend environment variables to enable live market data."
+        else:
+            detail += "ATTOM market data fetch may have failed. Try the 'Refresh market data' button, or wait a moment and reload."
+        raise HTTPException(status_code=422, detail=detail)
 
     # Re-evaluate floor qualification at compute time.
     # defect_qualifies_floor was frozen into instance_json at capture time.
@@ -244,4 +271,53 @@ def update_inputs(session_id: str, body: InputsUpdate):
     """
     db = get_db()
 
-    row = db.table(TABL
+    row = db.table(TABLE).select("*").eq("id", session_id).maybe_single().execute()
+    if not row.data:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+
+    session = row.data
+    patch: dict = {"compute_result": None}   # always invalidate cache on input change
+
+    if body.commission_rate is not None:
+        patch["commission_rate"] = body.commission_rate
+    if body.has_hoa is not None:
+        patch["has_hoa"] = body.has_hoa
+    if body.listing_month is not None:
+        patch["listing_month"] = body.listing_month
+    if body.seller_inputs is not None:
+        existing = session.get("seller_inputs") or {}
+        patch["seller_inputs"] = {**existing, **body.seller_inputs}
+
+    db.table(TABLE).update(patch).eq("id", session_id).execute()
+    return {"ok": True, "session_id": session_id}
+
+
+@router.post("/{session_id}/refetch-market-data")
+def refetch_market_data(session_id: str):
+    """
+    Clear cached ATTOM data so the next compute() call re-fetches fresh
+    market data from ATTOM.  Never touches instance_json (tags/conditions).
+    """
+    db = get_db()
+
+    row = db.table(TABLE).select("*").eq("id", session_id).maybe_single().execute()
+    if not row.data:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+
+    prop = row.data.get("property_json") or {}
+    attom_keys = {
+        "attom_fetched", "fetched_avms", "fetched_comps",
+        "fetched_active_listings", "neighborhood_sales_history", "attom_meta",
+    }
+    cleaned_prop = {k: v for k, v in prop.items() if k not in attom_keys}
+
+    db.table(TABLE).update({
+        "property_json":  cleaned_prop,
+        "compute_result": None,
+    }).eq("id", session_id).execute()
+
+    return {
+        "ok":        True,
+        "session_id": session_id,
+        "message":   "Market data cleared. Re-run compute to fetch fresh ATTOM data.",
+    }

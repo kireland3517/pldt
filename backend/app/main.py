@@ -7,8 +7,9 @@ validation/ is never referenced. See data_loader.py.
 from __future__ import annotations
 
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
 from .data_loader import ReferenceData
@@ -24,11 +25,23 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(","),
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Return JSON + CORS header for unhandled 500s so browser sees the real error."""
+    origin = request.headers.get("origin", "")
+    headers = {"Access-Control-Allow-Origin": origin or "*"} if origin else {}
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {type(exc).__name__}: {exc}"},
+        headers=headers,
+    )
 
 ref = ReferenceData()
 

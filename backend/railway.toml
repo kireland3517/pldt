@@ -1,0 +1,10 @@
+# Backend service config — use when Railway Root Directory is set to "backend".
+# In Railway service settings, set Config File Path to: /backend/railway.toml
+[build]
+builder = "RAILPACK"
+
+[deploy]
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
