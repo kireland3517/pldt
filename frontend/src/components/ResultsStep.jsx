@@ -1179,5 +1179,26 @@ const caveatNote    = { fontSize: 11, color: '#9ca3af', marginTop: 4, marginBott
 function planCardStyle(selected) {
   return {
     border: selected ? '2px solid #1a1a1a' : '1px solid #e5e7eb',
-    borderRadius: 6,
-    padding: '12px 1
+    borderRadius: 6, padding: '12px 16px', marginBottom: 10,
+    cursor: 'pointer', background: selected ? '#f9fafb' : '#fff',
+  }
+}
+
+function tabStyle(selected) {
+  return {
+    padding: '6px 14px', fontSize: 13, cursor: 'pointer',
+    border: '1px solid #e5e7eb', borderRadius: 3, marginRight: 6,
+    background: selected ? '#1a1a1a' : '#fff',
+    color: selected ? '#fff' : '#374151',
+    fontWeight: selected ? 600 : 400,
+  }
+}
+
+function liveNetBand(delta, isCustom) {
+  return {
+    display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4,
+    marginTop: 12, padding: '8px 12px', borderRadius: 4,
+    background: isCustom ? '#fefce8' : '#f0fdf4',
+    border: isCustom ? '1px solid #fde047' : '1px solid #bbf7d0',
+  }
+}
