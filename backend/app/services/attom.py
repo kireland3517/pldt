@@ -7,17 +7,10 @@ Fetches:
       fetched_comps:              sales in last 12 months, comparable size
       neighborhood_sales_history: sales in last 5 years
 
-Comp radius strategy:
-  Step through RADII narrowest-first. At each radius, fetch all pages with the
-  12-month date window passed server-side (startsalesearchdate / endsalesearchdate).
-  Stop at the first radius that yields MIN_COMP_COUNT comparable sales.
-  Never widen the time window past 12 months.
-
-Size filter:
-  Comps: ±40% of subject sqft. History: ±60% (looser — context only, not valuation).
-
-ATTOM is a public-records provider.  It does NOT supply active MLS listings.
-fetched_active_listings is always returned as an empty list.
+Active listings:
+  ATTOM is a public-records provider — no MLS data.
+  fetched_active_listings is populated only from manually-verified seed files.
+  For any address without a seed file it is always an empty list.
 
 API key read from ATTOM_API_KEY env var.  Never hardcoded or committed.
 """
@@ -29,11 +22,14 @@ import re
 import urllib.parse
 import urllib.request
 from datetime import date, timedelta
+from pathlib import Path
 
 BASE           = "https://api.gateway.attomdata.com"
 MIN_COMP_COUNT = 3
 RADII          = [1.0, 2.0, 3.0, 5.0]
 CONF_RADIUS    = 2.0
+
+_SEED_DIR = Path(__file__).resolve().parent.parent.parent / "seed"
 
 
 def _get(path: str, params: str = "") -> dict:
@@ -49,10 +45,6 @@ def _get(path: str, params: str = "") -> dict:
 
 
 def parse_address(one_line: str) -> tuple[str, str, str, str]:
-    """
-    Parse "130 Kingfisher Dr, Simpsonville, SC 29680"
-    -> (street, city, state, zip_code)
-    """
     parts    = [p.strip() for p in one_line.split(",")]
     street   = parts[0] if len(parts) > 0 else ""
     city     = parts[1] if len(parts) > 1 else ""
@@ -63,12 +55,10 @@ def parse_address(one_line: str) -> tuple[str, str, str, str]:
 
 
 def _ym(date_str: str) -> str:
-    """'2024-09-13' -> '2024-09'"""
     return date_str[:7] if date_str else ""
 
 
 def _in_size_band(sqft: float, subject_sqft: float, tolerance: float) -> bool:
-    """True if sqft is within ±tolerance fraction of subject_sqft."""
     if subject_sqft <= 0:
         return True
     lo = subject_sqft * (1 - tolerance)
@@ -77,14 +67,11 @@ def _in_size_band(sqft: float, subject_sqft: float, tolerance: float) -> bool:
 
 
 def _normalize_addr(addr: str) -> str:
-    """Uppercase, strip punctuation — for fallback self-exclusion comparison."""
     return re.sub(r"[^A-Z0-9 ]", "", addr.upper()).strip()
 
 
 def _extract_snapshot_entry(p: dict) -> dict | None:
     """
-    Extract a normalized comp/history entry from a sale/snapshot property dict.
-
     Field map (case-sensitive, from raw ATTOM JSON):
       price      -> sale.amount.saleamt
       sale date  -> sale.saleTransDate
@@ -95,12 +82,10 @@ def _extract_snapshot_entry(p: dict) -> dict | None:
       year built -> summary.yearbuilt
       prop type  -> summary.proptype
       distance   -> location.distance
-      attomId    -> identifier.attomId
     """
-    sale     = p.get("sale", {})
-    sale_amt = float((sale.get("amount") or {}).get("saleamt") or 0)
+    sale      = p.get("sale", {})
+    sale_amt  = float((sale.get("amount") or {}).get("saleamt") or 0)
     sale_date = sale.get("saleTransDate") or ""
-
     if not sale_date or sale_amt < 50_000:
         return None
 
@@ -132,7 +117,6 @@ def _extract_snapshot_entry(p: dict) -> dict | None:
     }
     if yr and int(yr) > 2010:
         entry["note"] = "newer build"
-
     return entry
 
 
@@ -142,9 +126,8 @@ def _fetch_snapshot_pages(
     start_date: str,
     end_date: str,
 ) -> list[dict]:
-    """Paginate sale/snapshot at a given radius and date window."""
     rows: list[dict] = []
-    for page in range(1, 31):   # max 30 pages × 50 = 1 500 rows
+    for page in range(1, 31):
         params = (
             f"{params_base}"
             f"&radius={radius}"
@@ -164,6 +147,35 @@ def _fetch_snapshot_pages(
     return rows
 
 
+def _load_manual_listings(street: str, city: str, state: str) -> tuple[list[dict], str]:
+    """
+    Load manually-verified active/pending listings for a known subject address.
+
+    Match is exact normalized equality:
+      _normalize_addr(street + city + state) == _normalize_addr("130 Kingfisher Dr Simpsonville SC")
+
+    Skips any row missing source=="manual" or missing verified_on.
+    Returns ([], "") for non-matching addresses or any file error.
+    """
+    subject_norm    = _normalize_addr(f"{street} {city} {state}")
+    kingfisher_norm = _normalize_addr("130 Kingfisher Dr Simpsonville SC")
+    if subject_norm != kingfisher_norm:
+        return [], ""
+
+    seed_file = _SEED_DIR / "manual_active_listings_kingfisher.json"
+    try:
+        data = json.loads(seed_file.read_text(encoding="utf-8"))
+    except Exception:
+        return [], ""
+
+    basis = data.get("basis", "")
+    valid = [
+        row for row in data.get("listings", [])
+        if row.get("source") == "manual" and row.get("verified_on")
+    ]
+    return valid, basis
+
+
 def fetch_attom_data(
     street: str,
     city: str,
@@ -172,17 +184,9 @@ def fetch_attom_data(
     subject_sqft: float = 0,
 ) -> dict:
     """
-    Returns dict with keys matching property_inputs schema:
-
-      fetched_avms:               {"attom": <int>}
-      fetched_comps:              list[comp_dict]   (12-month, comparable size)
-      neighborhood_sales_history: list[hist_dict]   (5-year window)
-      fetched_active_listings:    []                (always empty — no MLS data)
-      attom_meta:                 {comp_radius_miles, comp_count, avm_as_of}
-
-    comp_dict keys: address, beds, baths, sqft, built, sold (YYYY-MM),
-                    price, ppsf, note (optional)
-    hist_dict keys: address, sold (YYYY-MM), price, sqft, ppsf, beds, baths
+    Returns dict with keys:
+      fetched_avms, fetched_comps, neighborhood_sales_history,
+      fetched_active_listings, attom_meta
     """
     addr1  = street
     addr2  = f"{city}, {state} {zip_code}"
@@ -199,13 +203,13 @@ def fetch_attom_data(
         "attom_meta":                 {},
     }
 
-    # ── AVM (still on avm/detail — basicprofile field shape; unaffected) ──
-    subject_attom_id   = None
-    subject_addr_norm  = _normalize_addr(f"{street} {city} {state} {zip_code}")
-    avm_as_of          = ""
+    # ── AVM ──────────────────────────────────────────────────────────────
+    subject_attom_id  = None
+    subject_addr_norm = _normalize_addr(f"{street} {city} {state} {zip_code}")
+    avm_as_of         = ""
     try:
-        avm_resp         = _get("/propertyapi/v1.0.0/avm/detail", p_base)
-        props            = avm_resp.get("property", [])
+        avm_resp = _get("/propertyapi/v1.0.0/avm/detail", p_base)
+        props    = avm_resp.get("property", [])
         if props:
             p0               = props[0]
             subject_attom_id = p0.get("identifier", {}).get("attomId")
@@ -223,8 +227,8 @@ def fetch_attom_data(
     start_5yr  = (date.today() - timedelta(days=1825)).isoformat()
 
     # ── Comp fetch: narrow-to-wide radius, date window server-side ────────
-    used_radius            = RADII[-1]
-    final_comps: list[dict] = []
+    used_radius              = RADII[-1]
+    final_comps: list[dict]  = []
     last_candidates: list[dict] = []
 
     for radius in RADII:
@@ -232,16 +236,13 @@ def fetch_attom_data(
 
         candidates: list[dict] = []
         for p in rows:
-            # Self-exclude: attomId first, fallback to normalized address
             if subject_attom_id and p.get("identifier", {}).get("attomId") == subject_attom_id:
                 continue
             addr_norm = _normalize_addr(p.get("address", {}).get("oneLine", ""))
             if addr_norm and addr_norm == subject_addr_norm:
                 continue
-            # SFR only
             if p.get("summary", {}).get("proptype") != "SFR":
                 continue
-
             entry = _extract_snapshot_entry(p)
             if entry and _in_size_band(entry["sqft"], subject_sqft, 0.40):
                 candidates.append(entry)
@@ -252,20 +253,54 @@ def fetch_attom_data(
             final_comps = candidates
             break
 
-    # Fallback: use whatever the widest radius returned
     if not final_comps:
         used_radius = RADII[-1]
         final_comps = last_candidates
 
-    # Flag comps beyond CONF_RADIUS as lower-confidence
+    # Flag comps beyond CONF_RADIUS
     for e in final_comps:
         if e["_distance_mi"] > CONF_RADIUS:
             e["note"] = ((e.get("note") or "") + "; extended radius").lstrip("; ")
 
-    # ── 5-year history: separate call at used_radius ──────────────────────
-    hist_rows      = _fetch_snapshot_pages(p_base, used_radius, start_5yr, today)
-    comp_addr_set  = {_normalize_addr(e["address"]) for e in final_comps}
+    # ── 5-year history ────────────────────────────────────────────────────
+    hist_rows     = _fetch_snapshot_pages(p_base, used_radius, start_5yr, today)
+    comp_addr_set = {_normalize_addr(e["address"]) for e in final_comps}
 
     history: list[dict] = []
     for p in hist_rows:
-        if subject_attom_id and p.get("identifier", {}).g
+        if subject_attom_id and p.get("identifier", {}).get("attomId") == subject_attom_id:
+            continue
+        addr_norm = _normalize_addr(p.get("address", {}).get("oneLine", ""))
+        if addr_norm and addr_norm == subject_addr_norm:
+            continue
+        if p.get("summary", {}).get("proptype") != "SFR":
+            continue
+        entry = _extract_snapshot_entry(p)
+        if entry and _in_size_band(entry["sqft"], subject_sqft, 0.60):
+            if addr_norm not in comp_addr_set:
+                history.append(entry)
+
+    # ── Manual active listings ────────────────────────────────────────────
+    manual_listings, listings_basis = _load_manual_listings(street, city, state)
+
+    # ── Sort, clean, cap, assemble ────────────────────────────────────────
+    def _clean(e: dict) -> dict:
+        return {k: v for k, v in e.items() if not k.startswith("_")}
+
+    final_comps.sort(key=lambda x: x["sold"], reverse=True)
+    history.sort(key=lambda x: x["sold"], reverse=True)
+
+    result["fetched_comps"]              = [_clean(e) for e in final_comps[:10]]
+    result["neighborhood_sales_history"] = [_clean(e) for e in history[:20]]
+    result["fetched_active_listings"]    = manual_listings
+
+    attom_meta: dict = {
+        "comp_radius_miles": used_radius,
+        "comp_count":        len(result["fetched_comps"]),
+        "avm_as_of":         avm_as_of,
+    }
+    if listings_basis:
+        attom_meta["active_listings_basis"] = listings_basis
+    result["attom_meta"] = attom_meta
+
+    return result

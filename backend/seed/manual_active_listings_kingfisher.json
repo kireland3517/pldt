@@ -1,0 +1,43 @@
+{
+  "_note": "Hand-verified active and pending listings for the 130 Kingfisher demo. Source: GGAR MLS via Palmetto Park Realty, cross-checked on Zillow. NOT a live MLS feed.",
+  "basis": "manually entered from MLS-sourced listing pages; verified 2026-06-27; not a live MLS feed",
+  "listings": [
+    {
+      "address": "15 Waterthrush Way, Simpsonville, SC 29680",
+      "list_price": 359999,
+      "sqft": 1839,
+      "beds": 3,
+      "baths": 2,
+      "built": 1998,
+      "status": "active",
+      "ppsf": 196,
+      "price_cut": "-30000 on 2026-05-30",
+      "source": "manual",
+      "verified_on": "2026-06-27",
+      "listing_url": "https://www.palmettopark.com/homes/simpsonville/15-waterthrush-way"
+    },
+    {
+      "address": "6 Grackle Court, Simpsonville, SC 29680",
+      "list_price": 265000,
+      "sqft": 1293,
+      "beds": 3,
+      "baths": 2,
+      "built": 1999,
+      "status": "active",
+      "ppsf": 205,
+      "source": "manual",
+      "verified_on": "2026-06-27",
+      "listing_url": "https://www.palmettopark.com/homes/simpsonville/6-grackle-court"
+    },
+    {
+      "address": "6 Kingfisher Drive, Simpsonville, SC 29680",
+      "list_price": 359900,
+      "sqft": 2742,
+      "beds": 3,
+      "baths": 2,
+      "built": 1998,
+      "status": "pending",
+      "ppsf": 131,
+      "source": "manual",
+      "verified_on": "2026-06-27",
+      "listing_url": "https://www.palmettopark.com/homes/sim

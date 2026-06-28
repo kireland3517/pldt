@@ -408,6 +408,7 @@ export default function ResultsStep({ sessionId }) {
   const floor          = result.floor     || {}
   const repair         = result.repair_table || []
   const activeListings = result.active_listings   || []
+  const activeCount    = activeListings.filter(l => l.status === 'active').length
   const salesHistory   = result.sales_history_5yr || []
   const attomMeta      = result.attom_meta        || {}
   const planKeys = ['leaner', 'recommended', 'do_everything'].filter(k => plans[k])
@@ -575,15 +576,19 @@ export default function ResultsStep({ sessionId }) {
           </details>
         )}
 
-        {/* ── Active listings: seller's competition ── */}
-        {activeListings.length > 0 && (
-          <details style={{ marginTop: 12 }}>
-            <summary style={detailsLink}>Active listings — current competition</summary>
-            <p style={{...noteStyle, marginTop:6}}>
-              Homes currently on the market in the surrounding area. These are the seller's
-              direct competition. Active = listed, not yet under contract. Pending = under
-              contract, not yet closed.
+        {/* ── Active listings (manually entered) ── */}
+        <details style={{ marginTop: 12 }}>
+          <summary style={detailsLink}>
+            Active Listings (manually entered){activeCount > 0 ? ` — ${activeCount} active` : ''}
+          </summary>
+          {attomMeta.active_listings_basis && (
+            <p style={{ ...noteStyle, marginTop: 6, fontStyle: 'italic' }}>
+              {attomMeta.active_listings_basis}
             </p>
+          )}
+          {activeListings.length === 0 ? (
+            <p style={noteStyle}>No active listings entered.</p>
+          ) : (
             <table style={tableStyle}>
               <thead><tr>
                 <th style={th}>Address</th>
@@ -591,31 +596,42 @@ export default function ResultsStep({ sessionId }) {
                 <th style={{...th, textAlign:'right'}}>$/sqft</th>
                 <th style={{...th, textAlign:'right'}}>Sqft</th>
                 <th style={{...th, textAlign:'right'}}>Beds/Ba</th>
-                <th style={{...th, textAlign:'right'}}>Days on Mkt</th>
                 <th style={th}>Status</th>
+                <th style={th}>Verified</th>
               </tr></thead>
               <tbody>
-                {activeListings.map((l, i) => (
-                  <tr key={i}>
-                    <td style={td}>{l.address}</td>
-                    <td style={{...td, textAlign:'right'}}>{fmt(l.list_price)}</td>
-                    <td style={{...td, textAlign:'right'}}>
-                      {l.sqft ? `$${Math.round(l.list_price / l.sqft)}` : '—'}
-                    </td>
-                    <td style={{...td, textAlign:'right'}}>{l.sqft?.toLocaleString() || '—'}</td>
-                    <td style={{...td, textAlign:'right'}}>{l.beds}/{l.baths}</td>
-                    <td style={{...td, textAlign:'right'}}>{l.dom ?? '—'}</td>
-                    <td style={{...td,
-                      color: l.status === 'Pending' ? '#92400e' : '#14532d',
-                      fontWeight: 600}}>
-                      {l.status}
-                    </td>
-                  </tr>
-                ))}
+                {activeListings.map((l, i) => {
+                  const isPending = l.status === 'pending'
+                  return (
+                    <tr key={i} style={{ opacity: isPending ? 0.75 : 1 }}>
+                      <td style={td}>{l.address}</td>
+                      <td style={{...td, textAlign:'right'}}>{fmt(l.list_price)}</td>
+                      <td style={{...td, textAlign:'right'}}>
+                        {l.sqft ? `$${Math.round(l.list_price / l.sqft)}` : '—'}
+                      </td>
+                      <td style={{...td, textAlign:'right'}}>{l.sqft?.toLocaleString() || '—'}</td>
+                      <td style={{...td, textAlign:'right'}}>{l.beds}/{l.baths}</td>
+                      <td style={td}>
+                        <span style={{
+                          fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 3,
+                          background: isPending ? '#fef3c7' : '#d1fae5',
+                          color:      isPending ? '#92400e' : '#065f46',
+                        }}>
+                          {isPending ? 'Pending' : 'Active'}
+                        </span>
+                        {' '}
+                        <span style={{ fontSize: 10, color: '#9ca3af', fontWeight: 400 }}>
+                          manual
+                        </span>
+                      </td>
+                      <td style={{...td, fontSize: 11, color: '#6b7280'}}>{l.verified_on || '—'}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
-          </details>
-        )}
+          )}
+        </details>
 
         {/* ── 5-year neighborhood sales history: context only ── */}
         {salesHistory.length > 0 && (
@@ -1164,37 +1180,4 @@ function planCardStyle(selected) {
   return {
     border: selected ? '2px solid #1a1a1a' : '1px solid #e5e7eb',
     borderRadius: 6,
-    padding: '12px 16px',
-    marginBottom: 10,
-    cursor: 'pointer',
-    background: selected ? '#f9fafb' : '#fff',
-  }
-}
-
-function tabStyle(selected) {
-  return {
-    padding: '6px 14px',
-    fontSize: 13,
-    cursor: 'pointer',
-    border: '1px solid #e5e7eb',
-    borderRadius: 3,
-    marginRight: 6,
-    background: selected ? '#1a1a1a' : '#fff',
-    color: selected ? '#fff' : '#374151',
-    fontWeight: selected ? 600 : 400,
-  }
-}
-
-function liveNetBand(delta, isCustom) {
-  return {
-    display: 'flex',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 4,
-    marginTop: 12,
-    padding: '8px 12px',
-    borderRadius: 4,
-    background: isCustom ? '#fefce8' : '#f0fdf4',
-    border: isCustom ? '1px solid #fde047' : '1px solid #bbf7d0',
-  }
-}
+    padding: '12px 1
