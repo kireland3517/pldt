@@ -77,6 +77,7 @@ def _extract_snapshot_entry(p: dict) -> dict | None:
       sale date    -> sale.saleTransDate
       sqft         -> building.size.universalsize
       address      -> address.oneLine
+      zip          -> address.postal1
       beds         -> building.rooms.beds
       baths        -> building.rooms.bathstotal
       year_built   -> summary.yearbuilt
@@ -84,8 +85,7 @@ def _extract_snapshot_entry(p: dict) -> dict | None:
       distance_mi  -> location.distance
 
     is_newer_build: explicit boolean, True when year_built > 2010.
-    note:           display text only (e.g. "extended radius"); NOT used
-                    as a weight trigger in valuation.py.
+    note:           display text only; NOT a weight trigger in valuation.py.
     """
     sale      = p.get("sale", {})
     sale_amt  = float((sale.get("amount") or {}).get("saleamt") or 0)
@@ -102,7 +102,9 @@ def _extract_snapshot_entry(p: dict) -> dict | None:
     rooms      = bldg.get("rooms", {})
     beds       = int(rooms.get("beds") or 0)
     baths      = float(rooms.get("bathstotal") or 0)
-    addr       = p.get("address", {}).get("oneLine", "")
+    addr_block = p.get("address", {})
+    addr       = addr_block.get("oneLine", "")
+    zip_code   = addr_block.get("postal1", "") or ""
     yr         = p.get("summary", {}).get("yearbuilt")
     ppsf       = round(sale_amt / sqft)
     dist       = float((p.get("location") or {}).get("distance") or 0)
@@ -111,6 +113,7 @@ def _extract_snapshot_entry(p: dict) -> dict | None:
 
     entry: dict = {
         "address":        addr,
+        "zip":            zip_code,
         "beds":           beds,
         "baths":          baths,
         "sqft":           int(sqft),
@@ -157,11 +160,6 @@ def _fetch_snapshot_pages(
 def _load_manual_listings(street: str, city: str, state: str) -> tuple[list[dict], str]:
     """
     Load manually-verified active/pending listings for a known subject address.
-
-    Match is exact normalized equality:
-      _normalize_addr(street + city + state) == _normalize_addr("130 Kingfisher Dr Simpsonville SC")
-
-    Skips any row missing source=="manual" or missing verified_on.
     Returns ([], "") for non-matching addresses or any file error.
     """
     subject_norm    = _normalize_addr(f"{street} {city} {state}")
@@ -196,8 +194,11 @@ def fetch_attom_data(
       fetched_avms, fetched_comps, neighborhood_sales_history,
       fetched_active_listings, attom_meta
 
-    subject_beds: used to filter comps to within 1 bed of subject.
-                  Pass 0 to skip the beds filter (backwards-compat).
+    Comp and history filters applied (in order):
+      1. SFR only
+      2. Same postal code as subject (zip_code) — keeps comps in-submarket
+      3. Beds within 1 of subject_beds (skipped if subject_beds == 0)
+      4. Size band: ±40% for comps, ±60% for history
     """
     addr1  = street
     addr2  = f"{city}, {state} {zip_code}"
@@ -237,7 +238,7 @@ def fetch_attom_data(
     start_12mo = (date.today() - timedelta(days=365)).isoformat()
     start_5yr  = (date.today() - timedelta(days=1825)).isoformat()
 
-    # ── Comp fetch: narrow-to-wide radius, date window server-side ────────
+    # ── Comp fetch: narrow-to-wide radius, same-zip filter ─────────────
     used_radius              = RADII[-1]
     final_comps: list[dict]  = []
     last_candidates: list[dict] = []
@@ -247,19 +248,24 @@ def fetch_attom_data(
 
         candidates: list[dict] = []
         for p in rows:
+            # Skip subject property itself
             if subject_attom_id and p.get("identifier", {}).get("attomId") == subject_attom_id:
                 continue
             addr_norm = _normalize_addr(p.get("address", {}).get("oneLine", ""))
             if addr_norm and addr_norm == subject_addr_norm:
                 continue
+            # SFR only
             if p.get("summary", {}).get("proptype") != "SFR":
+                continue
+            # Same zip — keeps comps in the same submarket
+            if p.get("address", {}).get("postal1") != zip_code:
                 continue
             entry = _extract_snapshot_entry(p)
             if entry is None:
                 continue
             if not _in_size_band(entry["sqft"], subject_sqft, 0.40):
                 continue
-            # Beds filter: skip if more than 1 bed away from subject
+            # Beds filter: within 1 of subject
             if subject_beds > 0 and entry["beds"] > 0:
                 if abs(entry["beds"] - subject_beds) > 1:
                     continue
@@ -275,13 +281,13 @@ def fetch_attom_data(
         used_radius = RADII[-1]
         final_comps = last_candidates
 
-    # Flag comps beyond CONF_RADIUS with display note only (not a weight trigger)
+    # Flag comps beyond CONF_RADIUS — display only, not a weight trigger
     for e in final_comps:
         if e["distance_mi"] > CONF_RADIUS:
             existing = e.get("note", "")
             e["note"] = (existing + "; extended radius").lstrip("; ") if existing else "extended radius"
 
-    # ── 5-year history ────────────────────────────────────────────────────
+    # ── 5-year history (same-zip filter applied) ──────────────────────
     hist_rows     = _fetch_snapshot_pages(p_base, used_radius, start_5yr, today)
     comp_addr_set = {_normalize_addr(e["address"]) for e in final_comps}
 
@@ -293,6 +299,9 @@ def fetch_attom_data(
         if addr_norm and addr_norm == subject_addr_norm:
             continue
         if p.get("summary", {}).get("proptype") != "SFR":
+            continue
+        # Same zip filter on history too
+        if p.get("address", {}).get("postal1") != zip_code:
             continue
         entry = _extract_snapshot_entry(p)
         if entry and _in_size_band(entry["sqft"], subject_sqft, 0.60):
