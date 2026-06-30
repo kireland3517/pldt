@@ -151,10 +151,7 @@ def compute_as_is_range(property_inputs: dict) -> dict:
         hat = ws[i] * (xs[i] - mx_w) ** 2 / Sxx_w + ws[i] / sw if Sxx_w > 0 else 0
         comp_detail.append({
             "address":        c.get("address", f"comp{i+1}"),
-            "beds":           c.get("beds"),
-            "baths":          c.get("baths"),
             "sqft":           xs[i],
-            "year_built":     c.get("year_built"),
             "price":          float(c["price"]),
             "distance_mi":    c.get("distance_mi"),
             "is_newer_build": c.get("is_newer_build", False),
@@ -177,4 +174,14 @@ def compute_as_is_range(property_inputs: dict) -> dict:
         "high":           float(high),
         "avm_avg":        float(avm_avg) if avm_avg is not None else None,
         "ppsf_predicted": round(ppsf_pred, 2),
-        "confidence": 
+        "confidence":     round(confidence, 2),
+        "note":           " ".join(notes),
+        "comp_detail":    comp_detail,
+        "regression":     {
+            "a":                    round(a, 4),
+            "b":                    round(b, 6),
+            "bandwidth_sqft":       round(bw_used, 0),
+            "bandwidth_dist_mi":    0.75,
+            "weighted_mean_sqft":   round(mx_w, 0),
+        },
+    }
