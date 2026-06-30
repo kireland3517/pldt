@@ -24,3 +24,5 @@ def get_db() -> Client:
             "SUPABASE_URL and SUPABASE_KEY must be set in environment."
         )
     return create_client(url, key)
+
+TABLE = "pldt_sessions"
