@@ -151,6 +151,9 @@ def compute_as_is_range(property_inputs: dict) -> dict:
         hat = ws[i] * (xs[i] - mx_w) ** 2 / Sxx_w + ws[i] / sw if Sxx_w > 0 else 0
         comp_detail.append({
             "address":        c.get("address", f"comp{i+1}"),
+            "beds":           c.get("beds"),
+            "baths":          c.get("baths"),
+            "year_built":     c.get("year_built"),
             "sqft":           xs[i],
             "price":          float(c["price"]),
             "distance_mi":    c.get("distance_mi"),
