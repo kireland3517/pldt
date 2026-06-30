@@ -72,6 +72,51 @@ def _ensure_attom_fetched(session: dict, db, session_id: str) -> dict:
         return session  # ATTOM failed; fall through to seed data
 
 
+
+def _retry_failed_list_prices(session: dict, db, session_id: str) -> dict:
+    """
+    On every compute, retry history rows with list_price_status in
+    ("not_fetched", "fetch_failed").  Only "ok" and "no_data" are settled.
+    If any row transitions to settled, write the updated property_json to DB
+    and clear compute_result so the fresh data is used immediately.
+    """
+    import time as _time
+    from ..services.attom import fetch_rentcast_list_price
+
+    prop    = session.get("property_json") or {}
+    history = list(prop.get("neighborhood_sales_history") or [])
+    to_retry = [
+        i for i, r in enumerate(history)
+        if r.get("list_price_status") in ("not_fetched", "fetch_failed")
+    ]
+    if not to_retry:
+        return session
+
+    changed = False
+    for i in to_retry:
+        try:
+            lp, status, listed_date, dom = fetch_rentcast_list_price(history[i]["address"])
+        except Exception:
+            lp, status, listed_date, dom = None, "fetch_failed", None, None
+        # Always write the new status so not_fetched → fetch_failed is persisted.
+        # changed=True only for settled rows (ok/no_data) to trigger DB write.
+        history[i]["list_price_status"] = status
+        if status in ("ok", "no_data"):
+            history[i]["list_price"]  = lp
+            history[i]["listed_date"] = listed_date
+            history[i]["dom"]         = dom
+            changed = True
+        _time.sleep(0.3)
+
+    if changed:
+        updated_prop = {**prop, "neighborhood_sales_history": history}
+        db.table(TABLE).update({
+            "property_json":  updated_prop,
+            "compute_result": None,
+        }).eq("id", session_id).execute()
+        return {**session, "property_json": updated_prop, "compute_result": None}
+    return session
+
 def _run_chain(session: dict, ref: ReferenceData) -> dict:
     """
     Execute the full logic chain for a session row.
@@ -237,6 +282,7 @@ def compute(session_id: str, refresh: bool = False):
     # Fetch real ATTOM market data on first compute; clears cached result
     # so this recompute always uses the fresh ATTOM data.
     session = _ensure_attom_fetched(session, db, session_id)
+    session = _retry_failed_list_prices(session, db, session_id)
 
     result = _run_chain(session, ref)
 

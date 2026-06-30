@@ -22,6 +22,7 @@ import re
 import urllib.parse
 import urllib.request
 from datetime import date, timedelta
+import time
 from pathlib import Path
 
 BASE           = "https://api.gateway.attomdata.com"
@@ -262,7 +263,6 @@ def fetch_attom_data(
     # ── Date windows ──────────────────────────────────────────────────────
     today      = date.today().isoformat()
     start_12mo = (date.today() - timedelta(days=365)).isoformat()
-    start_5yr  = (date.today() - timedelta(days=1825)).isoformat()
 
     # ── Comp fetch: narrow-to-wide radius, same-zip filter ─────────────
     used_radius              = RADII[-1]
@@ -313,26 +313,22 @@ def fetch_attom_data(
             existing = e.get("note", "")
             e["note"] = (existing + "; extended radius").lstrip("; ") if existing else "extended radius"
 
-    # ── 5-year history (same-zip filter applied) ──────────────────────
-    hist_rows     = _fetch_snapshot_pages(p_base, used_radius, start_5yr, today)
-    comp_addr_set = {_normalize_addr(e["address"]) for e in final_comps}
+    # ── July seasonal history ────────────────────────────────────────────
+    july_rows = _fetch_july_history(p_base, zip_code)
 
-    history: list[dict] = []
-    for p in hist_rows:
-        if subject_attom_id and p.get("identifier", {}).get("attomId") == subject_attom_id:
+    # Enrich each row with RentCast list price; sequential with 0.3s throttle
+    for row in july_rows:
+        if row.get("list_price_status") not in ("not_fetched", "fetch_failed"):
             continue
-        addr_norm = _normalize_addr(p.get("address", {}).get("oneLine", ""))
-        if addr_norm and addr_norm == subject_addr_norm:
-            continue
-        if p.get("summary", {}).get("proptype") != "SFR":
-            continue
-        # Same zip filter on history too
-        if p.get("address", {}).get("postal1") != zip_code:
-            continue
-        entry = _extract_snapshot_entry(p)
-        if entry and _in_size_band(entry["sqft"], subject_sqft, 0.60):
-            if addr_norm not in comp_addr_set:
-                history.append(entry)
+        try:
+            lp, lp_status, listed_date, dom = fetch_rentcast_list_price(row["address"])
+            row["list_price"]        = lp
+            row["listed_date"]       = listed_date
+            row["dom"]               = dom
+            row["list_price_status"] = lp_status
+        except Exception:
+            row["list_price_status"] = "fetch_failed"
+        time.sleep(0.3)
 
     # ── Active listings: RentCast live feed preferred; manual seed as fallback ──
     if rc_listings:
@@ -346,16 +342,20 @@ def fetch_attom_data(
         return {k: v for k, v in e.items() if not k.startswith("_")}
 
     final_comps.sort(key=lambda x: x["sold"], reverse=True)
-    history.sort(key=lambda x: x["sold"], reverse=True)
 
     result["fetched_comps"]              = [_clean(e) for e in final_comps[:10]]
-    result["neighborhood_sales_history"] = [_clean(e) for e in history[:20]]
+    result["neighborhood_sales_history"] = july_rows
     result["fetched_active_listings"]    = final_listings
 
     attom_meta: dict = {
         "comp_radius_miles": used_radius,
         "comp_count":        len(result["fetched_comps"]),
         "avm_as_of":         avm_as_of,
+        "history_basis": (
+            f"Homes sold in July (closing date) within 1 mile, "
+            f"zip {zip_code}, 2022-2025. "
+            "List price from RentCast listings where available."
+        ),
     }
     if listings_basis:
         attom_meta["active_listings_basis"] = listings_basis
@@ -455,3 +455,102 @@ def fetch_rentcast_listings(
         return listings, basis
     except Exception:
         return [], ""
+
+
+def _fetch_july_history(p_base: str, zip_code: str) -> list[dict]:
+    """
+    Fetch SFR sales that CLOSED in July, 2022-2025.
+    Padded window Jun 15 - Aug 15 per year (ATTOM filters on record date, not
+    closing date), then trims in code to saleTransDate falling in July.
+    Filters: SFR, same zip, distance <= 1.0 mi.
+    Returns rows with list-price placeholders; caller enriches via RentCast.
+    """
+    RADIUS = 1.0
+    rows: list[dict] = []
+    for year in (2022, 2023, 2024, 2025):
+        start = f"{year}-06-15"
+        end   = f"{year}-08-15"
+        raw   = _fetch_snapshot_pages(p_base, RADIUS, start, end)
+        for p in raw:
+            if p.get("summary", {}).get("proptype") != "SFR":
+                continue
+            if p.get("address", {}).get("postal1") != zip_code:
+                continue
+            dist = float((p.get("location") or {}).get("distance") or 0)
+            if dist > RADIUS:
+                continue
+            entry = _extract_snapshot_entry(p)
+            if entry is None:
+                continue
+            # Trim to July closing date (saleTransDate)
+            sale_date = entry.get("_sale_date_iso", "")
+            if not sale_date.startswith(f"{year}-07"):
+                continue
+            rows.append({
+                "address":           entry["address"],
+                "sqft":              entry["sqft"],
+                "beds":              entry["beds"],
+                "baths":             entry["baths"],
+                "year_built":        entry["year_built"],
+                "sold_price":        entry["price"],
+                "sold_date":         sale_date[:10],
+                "ppsf":              entry["ppsf"],
+                "distance_mi":       entry["distance_mi"],
+                "list_price":        None,
+                "listed_date":       None,
+                "dom":               None,
+                "list_price_status": "not_fetched",
+            })
+    rows.sort(key=lambda x: x["sold_date"], reverse=True)
+    return rows
+
+
+def fetch_rentcast_list_price(
+    address: str,
+) -> tuple[int | None, str, str | None, int | None]:
+    """
+    Look up the list price for a sold home via RentCast /v1/listings/sale.
+    Returns (price_or_None, status, listed_date_or_None, dom_or_None).
+
+    Status vocabulary:
+      "ok"           -- price found; row is settled, never retried
+      "no_data"      -- RentCast returned empty array; settled, never retried
+      "fetch_failed" -- call error or 429 exhausted; retried on next compute load
+
+    429 responses get exponential back-off (1 s, 2 s, 4 s) before giving up
+    as fetch_failed.  A 429 is NEVER classified as no_data.
+    """
+    import urllib.error
+    if not os.environ.get("RENTCAST_API_KEY"):
+        return None, "no_data", None, None
+    addr_enc = urllib.parse.quote(address)
+    backoff  = [1.0, 2.0, 4.0]
+    attempt  = 0
+    while True:
+        try:
+            resp = _rentcast_get("/v1/listings/sale", f"address={addr_enc}")
+            rows = resp if isinstance(resp, list) else resp.get("listings", [])
+            if not rows:
+                return None, "no_data", None, None
+            row        = rows[0]
+            price      = row.get("price")
+            listed_iso = (row.get("listedDate") or "")[:10] or None
+            dom_val    = row.get("daysOnMarket")
+            if price:
+                return (
+                    int(price),
+                    "ok",
+                    listed_iso,
+                    int(dom_val) if dom_val is not None else None,
+                )
+            return None, "no_data", None, None
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and attempt < len(backoff):
+                time.sleep(backoff[attempt])
+                attempt += 1
+                continue   # retry with longer wait
+            if exc.code == 404:
+                return None, "no_data", None, None  # address not in RentCast
+            return None, "fetch_failed", None, None
+        except Exception:
+            return None, "fetch_failed", None, None
