@@ -3,6 +3,8 @@ compute.py — run the full logic chain and expose results.
 
 GET  /session/{id}/compute          Run chain (cached); return full result.
 PATCH /session/{id}/inputs          Update seller inputs; invalidate cache.
+PATCH /session/{id}/overrides       Stage 2 Step 1: set/clear a per-plan line
+                                     override; returns the recomputed result.
 POST  /session/{id}/reverse         Reverse-goal: find plan that hits target net.
 """
 from __future__ import annotations
@@ -33,6 +35,16 @@ def _get_ref() -> ReferenceData:
     if _ref is None:
         _ref = ReferenceData()
     return _ref
+
+
+# Valid per-plan override line keys (see app/logic/net_proceeds.py docstring).
+# commission_rate and mortgage_payoff/seller_credits/other_seller_costs are
+# GLOBAL and go through PATCH /inputs instead — not through this set.
+_OVERRIDE_LINE_KEYS = {
+    "transfer_tax", "attorney_fee", "deed_fee", "cl100",
+    "hoa_estoppel", "repair_cost", "concessions", "carrying_cost",
+}
+_PLAN_LEVELS = {"leaner", "recommended", "do_everything"}
 
 
 def _ensure_attom_fetched(session: dict, db, session_id: str) -> dict:
@@ -182,6 +194,9 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
     seller_inputs = session.get("seller_inputs") or {}
     commission_rate = session.get("commission_rate") or 0.06
     has_hoa       = session.get("has_hoa", False)
+    # Stage 2 Step 1: per-plan line overrides, keyed plan_level -> line_key -> amount.
+    # Column defaults to {} via migration; .get() guards sessions created before it.
+    overrides_by_plan = session.get("line_overrides_json") or {}
 
     if not prop:
         raise HTTPException(status_code=422, detail="Session has no property_json. Re-create session.")
@@ -231,6 +246,7 @@ def _run_chain(session: dict, ref: ReferenceData) -> dict:
         listing_month=listing_month,
         commission_rate=commission_rate,
         has_hoa=has_hoa,
+        overrides_by_plan=overrides_by_plan,
     )
 
     # active_listings and sales_history_5yr are display-only.
@@ -276,6 +292,7 @@ def compute(session_id: str, refresh: bool = False):
             "cached":          True,
             "commission_rate": session.get("commission_rate", 0.06),
             "seller_inputs":   session.get("seller_inputs") or {},
+            "line_overrides":  session.get("line_overrides_json") or {},
             **session["compute_result"],
         }
 
@@ -298,6 +315,7 @@ def compute(session_id: str, refresh: bool = False):
         "cached":          False,
         "commission_rate": session.get("commission_rate", 0.06),
         "seller_inputs":   session.get("seller_inputs") or {},
+        "line_overrides":  session.get("line_overrides_json") or {},
         **result,
     }
 
@@ -314,6 +332,10 @@ def update_inputs(session_id: str, body: InputsUpdate):
     """
     Update seller inputs or listing params. Invalidates compute cache so
     next GET /compute reflects the change.
+
+    GLOBAL overrides live here: commission_rate and seller_inputs
+    (mortgage_payoff, seller_credits, other_seller_costs) apply identically
+    to all three plans. Per-plan line overrides go through PATCH /overrides.
     """
     db = get_db()
 
@@ -336,6 +358,89 @@ def update_inputs(session_id: str, body: InputsUpdate):
 
     db.table(TABLE).update(patch).eq("id", session_id).execute()
     return {"ok": True, "session_id": session_id}
+
+
+class OverrideUpdate(BaseModel):
+    plan_level: str    # "leaner" | "recommended" | "do_everything"
+    line_key: str       # one of _OVERRIDE_LINE_KEYS
+    amount: Optional[float] = None   # None = clear/reset this line to calculated_amount
+
+
+@router.patch("/{session_id}/overrides")
+def update_override(session_id: str, body: OverrideUpdate):
+    """
+    Stage 2 Step 1 — set or clear a single PER-PLAN line override.
+
+    amount=<number>  sets line_overrides_json[plan_level][line_key] = amount.
+    amount=null       removes that key entirely (reset to calculated_amount).
+
+    Recomputes immediately and returns the full result (same shape as
+    GET /compute) so the caller sees calculated_amount, override_amount,
+    and the new net for every plan without a second round trip.
+
+    GLOBAL facts (commission_rate, mortgage_payoff, seller_credits,
+    other_seller_costs) are NOT accepted here — use PATCH /inputs.
+    """
+    if body.plan_level not in _PLAN_LEVELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"plan_level must be one of {sorted(_PLAN_LEVELS)}.",
+        )
+    if body.line_key not in _OVERRIDE_LINE_KEYS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"line_key '{body.line_key}' is not a per-plan override line. "
+                f"Valid keys: {sorted(_OVERRIDE_LINE_KEYS)}. "
+                "commission_rate / mortgage_payoff / seller_credits / "
+                "other_seller_costs are GLOBAL — use PATCH /inputs instead."
+            ),
+        )
+
+    db  = get_db()
+    ref = _get_ref()
+
+    row = db.table(TABLE).select("*").eq("id", session_id).maybe_single().execute()
+    if not row.data:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+
+    session = row.data
+    overrides_by_plan = dict(session.get("line_overrides_json") or {})
+    plan_overrides = dict(overrides_by_plan.get(body.plan_level) or {})
+
+    if body.amount is None:
+        plan_overrides.pop(body.line_key, None)   # reset
+    else:
+        plan_overrides[body.line_key] = body.amount
+
+    if plan_overrides:
+        overrides_by_plan[body.plan_level] = plan_overrides
+    else:
+        overrides_by_plan.pop(body.plan_level, None)
+
+    db.table(TABLE).update({
+        "line_overrides_json": overrides_by_plan,
+        "compute_result":      None,   # invalidate cache; recompute below
+    }).eq("id", session_id).execute()
+
+    session["line_overrides_json"] = overrides_by_plan
+    session = _ensure_attom_fetched(session, db, session_id)
+    session = _retry_failed_list_prices(session, db, session_id)
+    result = _run_chain(session, ref)
+
+    db.table(TABLE).update({
+        "compute_result": result,
+        "status": "compute",
+    }).eq("id", session_id).execute()
+
+    return {
+        "session_id":      session_id,
+        "address":         session.get("address", ""),
+        "commission_rate": session.get("commission_rate", 0.06),
+        "seller_inputs":   session.get("seller_inputs") or {},
+        "line_overrides":  overrides_by_plan,
+        **result,
+    }
 
 
 @router.post("/{session_id}/refetch-market-data")

@@ -16,6 +16,34 @@ Formula (all from sc_closing_constants.json + seller inputs):
 
 Blindness: sale_price comes from valuation.py output (OLS comps), never
 from validation/. All SC rates from sc_closing_constants.json.
+
+STAGE 2 STEP 1 — override layer
+--------------------------------
+Every line item now carries three numbers instead of one:
+  calculated_amount  — what the engine computes. NEVER overwritten.
+  override_amount    — user value, or None if not overridden.
+  amount             — the EFFECTIVE value used in the net sum
+                        (override_amount if set, else calculated_amount).
+
+Two override mechanisms, by design (see CLAUDE.md "Override engine" section):
+  - GLOBAL facts/rates (commission_rate, mortgage_payoff, seller_credits,
+    other_seller_costs, has_hoa) are carried in `seller_inputs` /
+    `commission_rate` — the same arguments this function already took.
+    Those argument VALUES are themselves the effective/override values;
+    this function derives calculated_amount as the baseline those would
+    take with no override (0 for pure facts, default-rate dollars for
+    commission) purely for display, and does not re-apply a second
+    override layer on top of them.
+  - PER-PLAN calculated lines (transfer_tax, attorney_fee, deed_fee,
+    cl100, hoa_estoppel, repair_cost, concessions, carrying_cost) take
+    their override through the new `overrides` dict, keyed by line key,
+    amount or absent/None = not overridden. This dict is per-plan: the
+    caller (net_for_plan / optimizer.build_plans) supplies a different
+    dict per plan level.
+
+At overrides={} (and commission_rate/seller_inputs unchanged from today),
+every calculated_amount and amount is byte-identical to the pre-override
+engine. See backend/tests/test_override_engine.py.
 """
 
 from __future__ import annotations
@@ -33,6 +61,7 @@ def compute_net_proceeds(
     concessions_total: float = 0.0,
     commission_rate: Optional[float] = None,
     has_hoa: bool = False,
+    overrides: Optional[dict] = None,
 ) -> dict:
     """
     Compute seller net proceeds.
@@ -47,122 +76,162 @@ def compute_net_proceeds(
     concessions_total     : buyer concessions credited instead of repairs
     commission_rate       : override; defaults to constants["commission"]["default_rate"]
     has_hoa               : seller confirms HOA; adds estoppel fee
+    overrides             : PER-PLAN line overrides. dict of
+                             line_key -> amount (or absent/None = not overridden).
+                             Valid keys: transfer_tax, attorney_fee, deed_fee,
+                             cl100, hoa_estoppel, repair_cost, concessions,
+                             carrying_cost. Unknown keys are ignored.
 
     Returns
     -------
-    dict with line_items list and net_proceeds float.
+    dict with line_items list (each item: key, label, calculated_amount,
+    override_amount, amount, note) and net_proceeds float.
     """
+    overrides = overrides or {}
     line_items = []
 
-    def deduct(label: str, amount: float, note: str = ""):
+    def deduct(key: str, label: str, calculated_amount: float,
+               override_amount: Optional[float] = None, note: str = ""):
+        effective = override_amount if override_amount is not None else calculated_amount
         line_items.append({
-            "label":  label,
-            "amount": round(amount, 2),
-            "note":   note,
+            "key":               key,
+            "label":             label,
+            "calculated_amount": round(calculated_amount, 2),
+            "override_amount":   round(override_amount, 2) if override_amount is not None else None,
+            "amount":            round(effective, 2),
+            "note":              note,
         })
-        return amount
+        return effective
 
     gross = sale_price
     total_deductions = 0.0
 
-    # 1. Mortgage payoff
+    # 1. Mortgage payoff — GLOBAL fact. The engine has no way to derive this;
+    #    calculated baseline is $0. seller_inputs["mortgage_payoff"] is itself
+    #    the global override value (set via PATCH /session/{id}/inputs).
     payoff = float(seller_inputs.get("mortgage_payoff", 0))
-    total_deductions += deduct("Mortgage payoff", payoff)
-
-    # 2. Commission
-    rate = commission_rate if commission_rate is not None else \
-           closing_constants["commission"]["default_rate"]
-    commission = gross * rate
     total_deductions += deduct(
-        "Agent commission",
-        commission,
-        f"{rate*100:.1f}% — adjustable",
+        "mortgage_payoff", "Mortgage payoff",
+        calculated_amount=0.0,
+        override_amount=(payoff if payoff else None),
     )
 
-    # 3. SC transfer tax ($1.85 per $500 of sale price)
+    # 2. Commission — GLOBAL rate. calculated_amount uses the library default
+    #    rate; override_amount is populated only when the effective rate
+    #    (commission_rate arg) differs from that default.
+    default_rate = closing_constants["commission"]["default_rate"]
+    rate = commission_rate if commission_rate is not None else default_rate
+    calc_commission = gross * default_rate
+    eff_commission  = gross * rate
+    commission_override = eff_commission if abs(rate - default_rate) > 1e-9 else None
+    total_deductions += deduct(
+        "commission", "Agent commission",
+        calculated_amount=calc_commission,
+        override_amount=commission_override,
+        note=f"{rate*100:.1f}% — adjustable",
+    )
+
+    # 3. SC transfer tax ($1.85 per $500 of sale price) — per-plan overridable
     rate_per_500 = closing_constants["sc_transfer_tax"]["rate_per_500"]
-    transfer_tax = math.ceil(gross / 500) * rate_per_500
+    transfer_tax_calc = math.ceil(gross / 500) * rate_per_500
     total_deductions += deduct(
-        "SC transfer tax",
-        transfer_tax,
-        closing_constants["sc_transfer_tax"]["note"],
+        "transfer_tax", "SC transfer tax",
+        calculated_amount=transfer_tax_calc,
+        override_amount=overrides.get("transfer_tax"),
+        note=closing_constants["sc_transfer_tax"]["note"],
     )
 
-    # 4. Attorney closing fee (midpoint)
+    # 4. Attorney closing fee (midpoint) — per-plan overridable
     atty = closing_constants["attorney_closing_fee"]
-    atty_fee = (atty["low"] + atty["high"]) / 2
+    atty_fee_calc = (atty["low"] + atty["high"]) / 2
     total_deductions += deduct(
-        "Attorney closing fee",
-        atty_fee,
-        atty["note"],
+        "attorney_fee", "Attorney closing fee",
+        calculated_amount=atty_fee_calc,
+        override_amount=overrides.get("attorney_fee"),
+        note=atty["note"],
     )
 
-    # 5. Deed recording fee
-    deed_fee = closing_constants["deed_recording_fee"]["flat"]
+    # 5. Deed recording fee — per-plan overridable
+    deed_fee_calc = float(closing_constants["deed_recording_fee"]["flat"])
     total_deductions += deduct(
-        "Deed recording fee",
-        float(deed_fee),
-        closing_constants["deed_recording_fee"]["note"],
+        "deed_fee", "Deed recording fee",
+        calculated_amount=deed_fee_calc,
+        override_amount=overrides.get("deed_fee"),
+        note=closing_constants["deed_recording_fee"]["note"],
     )
 
-    # 6. CL-100 termite letter (standard in SC; use midpoint)
+    # 6. CL-100 termite letter (standard in SC; use midpoint) — per-plan overridable
     cl100 = closing_constants["cl100_termite_letter"]
-    cl100_fee = (cl100["low"] + cl100["high"]) / 2
+    cl100_fee_calc = (cl100["low"] + cl100["high"]) / 2
     total_deductions += deduct(
-        "CL-100 termite letter",
-        cl100_fee,
-        cl100["note"],
+        "cl100", "CL-100 termite letter",
+        calculated_amount=cl100_fee_calc,
+        override_amount=overrides.get("cl100"),
+        note=cl100["note"],
     )
 
-    # 7. HOA estoppel / transfer fee (only if seller confirms HOA)
+    # 7. HOA estoppel / transfer fee (only if seller confirms HOA — has_hoa is
+    #    a GLOBAL toggle, unchanged) — per-plan overridable when applicable
     if has_hoa:
         hoa = closing_constants["hoa_estoppel_transfer"]
-        hoa_fee = (hoa["low"] + hoa["high"]) / 2
+        hoa_fee_calc = (hoa["low"] + hoa["high"]) / 2
         total_deductions += deduct(
-            "HOA estoppel / transfer fee",
-            hoa_fee,
-            hoa["note"],
+            "hoa_estoppel", "HOA estoppel / transfer fee",
+            calculated_amount=hoa_fee_calc,
+            override_amount=overrides.get("hoa_estoppel"),
+            note=hoa["note"],
         )
 
-    # 8. Plan repair cost (seller pays before close)
-    if plan_repair_cost_mid > 0:
+    # 8. Plan repair cost (seller pays before close) — per-plan overridable.
+    #    Line shows if the engine calculated a cost OR an override is set
+    #    (so a seller's actual quote can populate this even when the engine
+    #    found $0, or zero it out when the engine found a cost).
+    repair_override = overrides.get("repair_cost")
+    if plan_repair_cost_mid > 0 or repair_override is not None:
         total_deductions += deduct(
-            "Pre-listing repairs (plan)",
-            plan_repair_cost_mid,
-            "Mid-point of library cost range",
+            "repair_cost", "Pre-listing repairs (plan)",
+            calculated_amount=plan_repair_cost_mid,
+            override_amount=repair_override,
+            note="Mid-point of library cost range",
         )
 
-    # 9. Buyer concessions (credits offered instead of repairs)
-    if concessions_total > 0:
+    # 9. Buyer concessions (credits offered instead of repairs) — per-plan overridable
+    concessions_override = overrides.get("concessions")
+    if concessions_total > 0 or concessions_override is not None:
         total_deductions += deduct(
-            "Buyer concessions / credits",
-            concessions_total,
+            "concessions", "Buyer concessions / credits",
+            calculated_amount=concessions_total,
+            override_amount=concessions_override,
         )
 
-    # 10. Carrying cost
-    if carrying_cost_total > 0:
+    # 10. Carrying cost — per-plan overridable
+    carrying_override = overrides.get("carrying_cost")
+    if carrying_cost_total > 0 or carrying_override is not None:
         total_deductions += deduct(
-            "Estimated carrying cost",
-            carrying_cost_total,
-            "Interest + tax + insurance + utilities during DOM",
+            "carrying_cost", "Estimated carrying cost",
+            calculated_amount=carrying_cost_total,
+            override_amount=carrying_override,
+            note="Interest + tax + insurance + utilities during DOM",
         )
 
-    # 11. Seller-entered buyer credits / concessions (C-CREDITS)
+    # 11. Seller-entered buyer credits / concessions (C-CREDITS) — GLOBAL fact
     seller_credits = float(seller_inputs.get("seller_credits", 0) or 0)
     if seller_credits > 0:
         total_deductions += deduct(
-            "Buyer credits / concessions",
-            seller_credits,
-            "Entered by seller",
+            "seller_credits", "Buyer credits / concessions",
+            calculated_amount=0.0,
+            override_amount=seller_credits,
+            note="Entered by seller",
         )
 
-    # 12. Other seller costs (C-OTHER-COSTS): moving, staging, extra attorney, etc.
+    # 12. Other seller costs (C-OTHER-COSTS) — GLOBAL fact
     other_seller_costs = float(seller_inputs.get("other_seller_costs", 0) or 0)
     if other_seller_costs > 0:
         total_deductions += deduct(
-            "Other seller costs",
-            other_seller_costs,
-            "Moving, staging, extra attorney work, etc.",
+            "other_seller_costs", "Other seller costs",
+            calculated_amount=0.0,
+            override_amount=other_seller_costs,
+            note="Moving, staging, extra attorney work, etc.",
         )
 
     net = gross - total_deductions
@@ -189,6 +258,7 @@ def net_for_plan(
     seller_inputs: dict,
     commission_rate: Optional[float] = None,
     has_hoa: bool = False,
+    overrides: Optional[dict] = None,
 ) -> dict:
     """
     High-level helper: picks the right repair cost basis for each plan level
@@ -198,6 +268,8 @@ def net_for_plan(
       "leaner"        → Floor items only (mid cost from floor_result)
       "recommended"   → Floor + high-recoup items better_value in (repair, replace)
       "do_everything" → all items with better_value != "leave"
+
+    overrides: this plan's per-plan line overrides (see compute_net_proceeds).
     """
     # Sale price: always the as-is mid (seller hasn't done work yet; value
     # for "recommended" and "do_everything" should be adjusted upward by the
@@ -262,6 +334,7 @@ def net_for_plan(
         concessions_total=concessions_total,
         commission_rate=commission_rate,
         has_hoa=has_hoa,
+        overrides=overrides,
     )
     result["plan_level"] = plan_level
     result["dom_days"]   = dom_result["estimated_dom"]

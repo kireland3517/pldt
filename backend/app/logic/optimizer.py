@@ -14,6 +14,11 @@ upgrades, estimates net proceeds, and scores plans on:
 
 Blindness: sale price adjustments are computed from library recoup_pct,
 not from any pre-computed answer in validation/.
+
+STAGE 2 STEP 1: build_plans() takes an optional overrides_by_plan dict,
+keyed by plan_level -> per-plan line overrides (see net_proceeds.py).
+overrides_by_plan=None (or missing a level) means no overrides for that
+level — identical to the pre-override engine.
 """
 
 from __future__ import annotations
@@ -44,15 +49,22 @@ def build_plans(
     listing_month: Optional[int] = None,
     commission_rate: Optional[float] = None,
     has_hoa: bool = False,
+    overrides_by_plan: Optional[dict] = None,
 ) -> dict:
     """
     Build and score all three plans.
+
+    overrides_by_plan: {"leaner": {...}, "recommended": {...},
+                         "do_everything": {...}}. Each inner dict is this
+    plan's per-plan line overrides (see net_proceeds.compute_net_proceeds).
+    Missing levels / None = no overrides for that plan.
 
     Returns dict with keys "leaner", "recommended", "do_everything",
     each containing: plan metadata, net_proceeds result, dom result,
     carrying cost, and a summary scorecard.
     """
     plans = {}
+    overrides_by_plan = overrides_by_plan or {}
 
     for level in ("leaner", "recommended", "do_everything"):
         dom_result = estimate_dom(dom_data, level, listing_month)
@@ -80,6 +92,7 @@ def build_plans(
             seller_inputs=seller_inputs,
             commission_rate=commission_rate,
             has_hoa=has_hoa,
+            overrides=overrides_by_plan.get(level),
         )
 
         # Summarize which items are included in this plan
