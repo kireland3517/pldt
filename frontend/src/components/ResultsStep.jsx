@@ -468,7 +468,7 @@ export default function ResultsStep({ sessionId }) {
         </div>
         <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', fontSize: 13, marginBottom: 10 }}>
           <div><strong>Estimated market value (mid):</strong> {fmt(val.mid)}</div>
-          <div><strong>Plan:</strong> {PLAN_LABELS[selectedPlan]}</div>
+          <div><strong>Plan:</strong> {PLAN_LABELS[selectedPlan] || 'Custom'}</div>
           <div><strong>Est. net proceeds:</strong> {fmt(selNet.net_proceeds)}</div>
           <div><strong>Commission:</strong> {commission}%</div>
           <div><strong>Mortgage payoff:</strong> {fmt(payoffTotal)}</div>
@@ -481,8 +481,7 @@ export default function ResultsStep({ sessionId }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    marginBottom: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h2 style={{ fontSize: 16, margin: 0 }}>Report</h2>
           <button className="no-print" onClick={handleDownloadPdf} disabled={pdfLoading}
@@ -507,7 +506,7 @@ export default function ResultsStep({ sessionId }) {
           )}
         </div>
         <span className="no-print" style={{ fontSize: 11, color: '#aaa', fontFamily: 'monospace' }}
-              title='Copy this ID to resume the session later'>
+              title="Copy this ID to resume the session later">
           session: {sessionId}
         </span>
       </div>
@@ -535,70 +534,169 @@ export default function ResultsStep({ sessionId }) {
         </section>
       )}
 
-      {/* ── 1. Plans ── */}
-      <section style={sectionStyle}>
-        <h3 style={h3}>Plans — estimated net proceeds</h3>
-        <p style={noteStyle}>
-          Net proceeds = sale price − mandatory work − plan repairs − closing costs − payoff.
-        </p>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-          {planKeys.map(key => {
-            const p   = plans[key]
-            const net = p.net_proceeds || {}
-            const isNeg = (net.net_proceeds ?? 0) < 0
-            return (
-              <div key={key}
-                style={planCardStyle(selectedPlan === key)}
-                className={selectedPlan === key ? 'plan-card plan-card-selected' : 'plan-card'}
-                onClick={() => setSelectedPlan(key)}
-              >
-                <div className="plan-card-label" style={{ fontWeight: 700, marginBottom: 4, fontSize: 13 }}>
-                  {PLAN_LABELS[key]}
-                </div>
-                <div className="plan-card-desc" style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>
-                  {PLAN_DESCRIPTIONS[key]}
-                </div>
-                <div style={{ fontSize: 11, color: '#888', marginBottom: 1 }}>Suggested listing price (estimate)</div>
-                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{fmt(p.adjusted_sale_price)}</div>
-                {p.value_lift_capped > 0 && (
-                  <div style={{ fontSize: 11, color: '#1a7f37', marginBottom: 4 }}>
-                    +{fmt(p.value_lift_capped)} est. value lift
-                    {p.value_lift_cap_binding && (
-                      <span style={{ marginLeft: 4, color: '#b45309', cursor: 'default' }}>
-                        ⚑ value lift capped<Tip id="valueLiftCapped" />
-                      </span>
-                    )}
+      {/* ── 1. Plans (tabbed) ── */}
+      <section style={{ ...sectionStyle, borderRadius: 12, border: '0.5px solid #e5e7eb' }}>
+        <h3 style={h3}>Plans</h3>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
+          {[...planKeys, 'custom'].map(key => (
+            <button key={key}
+              onClick={() => setSelectedPlan(key)}
+              style={{
+                padding: '6px 18px', borderRadius: 20,
+                border: selectedPlan === key ? '1px solid #111827' : '1px solid #d1d5db',
+                background: selectedPlan === key ? '#111827' : '#f9fafb',
+                color: selectedPlan === key ? '#fff' : '#374151',
+                fontWeight: selectedPlan === key ? 500 : 400,
+                fontSize: 13, cursor: 'pointer',
+              }}>
+              {key === 'custom' ? 'Custom' : PLAN_LABELS[key]}
+            </button>
+          ))}
+        </div>
+        {selectedPlan === 'custom' ? (
+          <div style={{ padding: '20px 0', color: '#6b7280', fontSize: 13 }}>
+            <strong style={{ color: '#374151' }}>Custom plan builder coming in a future update.</strong>
+            {' '}Switch to Leaner, Recommended, or Do Everything to compare paths.
+          </div>
+        ) : (() => {
+          const p        = plans[selectedPlan] || {}
+          const net      = p.net_proceeds || {}
+          const planIds  = new Set((p.included_items || []).map(
+            x => typeof x === 'string' ? x : x.component_id
+          ))
+          const panelReq = repair.filter(item => floorIds.has(item.component_id))
+          const panelOpt = repair.filter(
+            item => planIds.has(item.component_id) && !floorIds.has(item.component_id)
+          )
+          const isNeg = (net.net_proceeds ?? 0) < 0
+          return (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between',
+                            alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 3 }}>
+                    {PLAN_LABELS[selectedPlan]}
                   </div>
-                )}
-                {net.line_items && (
-                  <div style={{ fontSize: 11, borderTop: '1px solid #e5e7eb', paddingTop: 8, marginTop: 4 }}
-                       onClick={e => e.stopPropagation()}>
-                    {net.line_items.map((li, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2, color: '#555' }}>
-                        <span>&minus; {li.label}</span>
-                        <span>({fmt(li.amount)})</span>
-                      </div>
-                    ))}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6,
-                                  borderTop: '1px solid #e5e7eb', fontWeight: 700 }}>
-                      <span>Est. net proceeds</span>
-                      <span style={{ color: isNeg ? '#c00' : '#1a7f37' }}>{fmt(net.net_proceeds)}</span>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>
+                    {PLAN_DESCRIPTIONS[selectedPlan]}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 2 }}>
+                    Suggested listing price (estimate)
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 500, marginBottom: 2 }}>
+                    {fmt(p.adjusted_sale_price)}
+                  </div>
+                  {p.value_lift_capped > 0 && (
+                    <div style={{ fontSize: 11, color: '#1a7f37' }}>
+                      +{fmt(p.value_lift_capped)} est. value lift
+                      {p.value_lift_cap_binding && (
+                        <span style={{ marginLeft: 4, color: '#b45309' }}>
+                          ⚑ capped<Tip id="valueLiftCapped" />
+                        </span>
+                      )}
                     </div>
-                  </div>
-                )}
-                {p.plan_roi_pct != null && (
-                  <div style={{ fontSize: 11, color: p.plan_roi_pct >= 0 ? '#1a7f37' : '#c00', marginTop: 6 }}>
-                    Plan ROI: {p.plan_roi_pct > 0 ? '+' : ''}{p.plan_roi_pct}%
-                    <Tip id="planROI" />
-                  </div>
-                )}
-                <div style={{ fontSize: 11, color: '#777', marginTop: 4 }}>
-                  {p.dom?.estimated_dom} days est. · {p.item_count} items
+                  )}
                 </div>
               </div>
-            )
-          })}
-        </div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+                {p.dom?.estimated_dom} days est.
+                {' · '}{panelReq.length} required + {panelOpt.length} optional items
+                {p.plan_roi_pct != null && (
+                  <span style={{ marginLeft: 10, color: p.plan_roi_pct >= 0 ? '#1a7f37' : '#c00' }}>
+                    ROI: {p.plan_roi_pct > 0 ? '+' : ''}{p.plan_roi_pct}%<Tip id="planROI" />
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                {/* Left: repair list */}
+                <div style={{ flex: '1 1 260px', minWidth: 200 }}>
+                  {panelReq.length > 0 && (
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ fontWeight: 500, fontSize: 12, color: '#7c2d12', marginBottom: 6,
+                                    background: '#fef3c7', padding: '4px 8px', borderRadius: 4 }}>
+                        Required to sell ({panelReq.length})
+                      </div>
+                      {panelReq.map((item, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
+                                              fontSize: 12, padding: '4px 0',
+                                              borderBottom: '1px solid #f3f4f6' }}>
+                          <span>
+                            {item.display_name}
+                            <span style={{ color: '#9ca3af', marginLeft: 4 }}>
+                              — {PATH_LABELS[item.better_value] || item.better_value}
+                            </span>
+                          </span>
+                          <span style={{ whiteSpace: 'nowrap', marginLeft: 12 }}>
+                            {item.cost_mid != null
+                              ? fmt(item.cost_mid)
+                              : fmtRange(item.cost_low, item.cost_high)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {panelOpt.length > 0 && (
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: 12, color: '#065f46', marginBottom: 6,
+                                    background: '#d1fae5', padding: '4px 8px', borderRadius: 4 }}>
+                        Optional — pays back at sale ({panelOpt.length})
+                      </div>
+                      {panelOpt.map((item, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
+                                              fontSize: 12, padding: '4px 0',
+                                              borderBottom: '1px solid #f3f4f6' }}>
+                          <span>
+                            {item.display_name}
+                            <span style={{ color: '#9ca3af', marginLeft: 4 }}>
+                              — {PATH_LABELS[item.better_value] || item.better_value}
+                            </span>
+                          </span>
+                          <span style={{ whiteSpace: 'nowrap', marginLeft: 12 }}>
+                            {item.cost_mid != null
+                              ? fmt(item.cost_mid)
+                              : fmtRange(item.cost_low, item.cost_high)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {panelReq.length === 0 && panelOpt.length === 0 && (
+                    <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 0 }}>
+                      No repair items for this plan.
+                    </p>
+                  )}
+                </div>
+                {/* Right: price-to-net chain */}
+                <div style={{ flex: '0 1 260px', minWidth: 200, background: '#f9fafb',
+                              borderRadius: 8, padding: '14px 16px', border: '0.5px solid #e5e7eb' }}>
+                  <div style={{ fontWeight: 500, fontSize: 12, marginBottom: 10, color: '#374151' }}>
+                    Price to net
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between',
+                                marginBottom: 10, fontSize: 13 }}>
+                    <span>Listing price</span>
+                    <span style={{ fontWeight: 500 }}>{fmt(p.adjusted_sale_price)}</span>
+                  </div>
+                  {(net.line_items || []).map((li, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
+                                          fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
+                      <span>− {li.label}</span>
+                      <span>({fmt(li.amount)})</span>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10,
+                                paddingTop: 10, borderTop: '1px solid #d1d5db',
+                                fontWeight: 500, fontSize: 13 }}>
+                    <span>Est. net proceeds</span>
+                    <span style={{ color: isNeg ? '#c00' : '#1a7f37' }}>{fmt(net.net_proceeds)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
         <p style={caveatNote}>
           Days-on-market is based on historical averages and seasonality.
           A hot or slow market will shift this significantly.
@@ -609,108 +707,10 @@ export default function ResultsStep({ sessionId }) {
         </p>
       </section>
 
-      {/* ── 2. Required-to-sell repairs ── */}
-      <section style={sectionStyle}>
-        {/* Plan tabs + live net bar */}
-        <div className="no-print" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
-          <div>
-            {planKeys.map(key => (
-              <button key={key}
-                style={tabStyle(key === selectedPlan)}
-                onClick={() => setSelectedPlan(key)}>
-                {PLAN_LABELS[key]}
-              </button>
-            ))}
-          </div>
-          <div style={liveNetBand(netDelta, isCustomized || hasCustomCosts)}>
-            <span style={{ fontSize: 11, color: '#555', marginRight: 8 }}>
-              {isCustomized || hasCustomCosts ? 'Custom plan — est. net:' : `${PLAN_LABELS[selectedPlan]} est. net:`}
-            </span>
-            <span style={{ fontSize: 15, fontWeight: 700, color: liveNet < 0 ? '#c00' : '#1a7f37' }}>
-              {fmt(liveNet)}
-            </span>
-            {(isCustomized || hasCustomCosts) && netDelta !== 0 && (
-              <span style={{ fontSize: 11, color: netDelta > 0 ? '#1a7f37' : '#c00', marginLeft: 8 }}>
-                ({netDelta > 0 ? '+' : ''}{fmt(netDelta)} vs plan)
-              </span>
-            )}
-            {(isCustomized || hasCustomCosts) && (
-              <button
-                style={{ marginLeft: 12, fontSize: 11, background: 'none', border: '1px solid #ccc', borderRadius: 3, padding: '2px 8px', cursor: 'pointer' }}
-                onClick={() => { setCustomItems(null); setCustomCosts({}) }}
-              >
-                Reset to plan
-              </button>
-            )}
-          </div>
-        </div>
-        <p className="no-print" style={{ fontSize: 11, color: '#888', marginTop: -8, marginBottom: 14 }}>
-          Check or uncheck items to build your own plan. Click any cost to enter a real quote.
-          {(isCustomized || hasCustomCosts) && ' Live estimate is approximate — use "Apply and recompute" below for the exact number.'}
-        </p>
-
-        <h3 style={h3}>Required-to-sell repairs</h3>
-        {floorItems.length > 0 ? (
-          <div>
-            <div className="section-head" style={sectionHeadStyle('#7c2d12', '#fef3c7', '⚠')}>
-              Required to sell<Tip id="requiredToSell" /> — {floorItems.length} item{floorItems.length !== 1 ? 's' : ''}
-            </div>
-            <p style={{ fontSize: 12, color: '#78350f', margin: '6px 0 10px' }}>
-              These must be addressed before listing. Lenders require them fixed before approving a buyer's loan,
-              or they are safety issues that will be called out in the buyer's inspection.
-              They are included in every plan.
-            </p>
-            <table style={tableStyle}>
-              <thead>
-                <tr>
-                  <th style={th}>Component</th>
-                  <th style={th}>Reason required</th>
-                  <th style={th}>Rec. action</th>
-                  <th style={th} className="num" title="Click any cost to enter your real quote">Cost estimate ✎</th>
-                  <th style={th}>Condition</th>
-                  <th style={th}>Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                {floorItems.map((item, i) => (
-                  <tr key={i} style={{ background: i % 2 === 0 ? '#fffbeb' : '#fff' }}>
-                    <td style={{ ...td, fontWeight: 600 }}>{item.display_name}</td>
-                    <td style={{ ...td, fontSize: 11, color: '#92400e' }}>{item.floor_reason}</td>
-                    <td style={{ ...td, fontWeight: 500 }}>{PATH_LABELS[item.better_value] || item.better_value}</td>
-                    <td style={td} className="num">
-                      <CostCell
-                        item={item}
-                        customCosts={customCosts}
-                        editingCost={editingCost}
-                        setEditingCost={setEditingCost}
-                        onCostSave={handleCostSave}
-                      />
-                    </td>
-                    <td style={{ ...td, fontSize: 11, color: '#555' }}>{item.condition_detected || '—'}</td>
-                    <td style={{ ...td, fontSize: 11, color: '#777' }}>{item.notes || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div style={{ fontSize: 12, color: '#555', marginTop: 6 }}>
-              Required-to-sell total: <strong>{fmtRange(floor.cost_low, floor.cost_high)}</strong>
-              {floor.cost_mid ? ` (mid ${fmt(floor.cost_mid)})` : ''}
-            </div>
-          </div>
-        ) : (
-          <p style={{ fontSize: 13, color: '#888' }}>No required-to-sell items found.</p>
-        )}
-        {floorItems.length === 0 && discretionary.length === 0 && notIncluded.length === 0 && upgradeItems.length === 0 && (
-          <p style={{ fontSize: 13, color: '#888' }}>
-            No repair items found. Make sure photos have been tagged and the questionnaire submitted.
-          </p>
-        )}
-      </section>
-
-      {/* ── 3. Why repairs matter ── */}
+      {/* ── LenderGate ── */}
       {lenderGate && (
         <section style={sectionStyle}>
-          <div style={{ fontWeight: 600, marginBottom: 8, color: '#374151', fontSize: 14 }}>
+          <div style={{ fontWeight: 500, marginBottom: 8, color: '#374151', fontSize: 14 }}>
             Why these repairs matter for your buyer pool<Tip id="investorPath" />
           </div>
           <p style={{ margin: '0 0 10px', color: '#4b5563', lineHeight: 1.5, fontSize: 13 }}>
@@ -722,28 +722,24 @@ export default function ResultsStep({ sessionId }) {
             Addressing these before listing keeps your home open to all buyers.
           </p>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
-            <div style={{
-              flex: 1, minWidth: 160, padding: '10px 14px',
-              background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 5,
-            }}>
-              <div style={{ fontSize: 11, color: '#166534', fontWeight: 600, marginBottom: 3 }}>
+            <div style={{ flex: 1, minWidth: 160, padding: '10px 14px',
+                          background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 5 }}>
+              <div style={{ fontSize: 11, color: '#166534', fontWeight: 500, marginBottom: 3 }}>
                 If repaired: financed buyers, retail pricing
               </div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: '#15803d' }}>
+              <div style={{ fontSize: 18, fontWeight: 500, color: '#15803d' }}>
                 {fmt(lenderGate.retail_price)}
               </div>
               <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>
                 Full buyer pool, retail comp pricing
               </div>
             </div>
-            <div style={{
-              flex: 1, minWidth: 160, padding: '10px 14px',
-              background: '#f9fafb', border: '1px solid #d1d5db', borderRadius: 5,
-            }}>
-              <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 3 }}>
+            <div style={{ flex: 1, minWidth: 160, padding: '10px 14px',
+                          background: '#f9fafb', border: '1px solid #d1d5db', borderRadius: 5 }}>
+              <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 500, marginBottom: 3 }}>
                 If left as-is: cash investors, ~75% of retail
               </div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: '#374151' }}>
+              <div style={{ fontSize: 18, fontWeight: 500, color: '#374151' }}>
                 ~{fmt(lenderGate.investor_price)}
               </div>
               <div style={{ fontSize: 11, color: '#6b7280', marginTop: 3 }}>
@@ -753,201 +749,43 @@ export default function ResultsStep({ sessionId }) {
           </div>
           <div style={{ fontSize: 12, color: '#6b7280' }}>
             Estimated gap: <strong style={{ color: '#374151' }}>{fmt(lenderGate.investor_gap)}</strong>
-            {' '}between the two paths.
-            Selling as-is to a cash buyer is a real option — for speed or when repair
-            isn&apos;t feasible. This comparison shows the trade-off so you can choose with
-            full information.
+            {' '}between the two paths. Selling as-is to a cash buyer is a real option — for speed
+            or when repair isn&apos;t feasible.
           </div>
           <div style={{ fontSize: 12, color: '#888', marginTop: 8 }}>
-            See plan cards above to compare net proceeds for each path.
+            See plan tabs above to compare net proceeds for each path.
           </div>
         </section>
       )}
 
-      {/* ── 4. Optional / value-increasing items ── */}
-      <section style={sectionStyle}>
-        <h3 style={h3}>Optional / value-increasing items</h3>
-        <div style={{ marginBottom: 20 }}>
-          <div className="section-head" style={sectionHeadStyle('#14532d', '#f0fdf4', '↑')}>
-            Optional — increases value<Tip id="optionalValue" />
-            {discretionary.length > 0
-              ? ` — ${discretionary.length} item${discretionary.length !== 1 ? 's' : ''} selected`
-              : ' — none selected'}
-          </div>
-          <p style={{ fontSize: 12, color: '#166534', margin: '6px 0 10px' }}>
-            Not required to sell. Included because the value return justifies the spend.
-            Uncheck any item to remove it from your plan and see the live net adjust.
-          </p>
-          {discretionary.length > 0 ? (
-            <table style={tableStyle}>
-              <thead>
-                <tr>
-                  <th style={{ ...th, width: 28 }}></th>
-                  <th style={th}>Component</th>
-                  <th style={th}>Condition</th>
-                  <th style={th}>Rec. action</th>
-                  <th style={th} className="num" title="Click any cost to enter your real quote">Cost estimate ✎</th>
-                  <th style={th}>Value return<Tip id="valueReturn" /></th>
-                  <th style={th}>Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                {discretionary.map((item, i) => (
-                  <tr key={i} style={{ background: i % 2 === 0 ? '#f0fdf4' : '#fff' }}>
-                    <td style={{ ...td, textAlign: 'center' }}>
-                      <input type="checkbox" checked
-                        onChange={() => toggleItem(item.component_id)}
-                        className="no-print"
-                        style={{ cursor: 'pointer' }} />
-                    </td>
-                    <td style={{ ...td, fontWeight: 500 }}>{item.display_name}</td>
-                    <td style={{ ...td, fontSize: 11, color: '#555' }}>{item.condition_detected || '—'}</td>
-                    <td style={td}>{PATH_LABELS[item.better_value] || item.better_value}</td>
-                    <td style={td} className="num">
-                      <CostCell
-                        item={item}
-                        customCosts={customCosts}
-                        editingCost={editingCost}
-                        setEditingCost={setEditingCost}
-                        onCostSave={handleCostSave}
-                      />
-                    </td>
-                    <td style={{ ...td, fontSize: 11 }}>
-                      {item.effective_recoup_label || `${item.recoup_pct?.toFixed(0)}%`}
-                      {item.effective_recoup_label === 'enables sale / removes discount' && <Tip id="enablesSale" />}
-                    </td>
-                    <td style={{ ...td, fontSize: 11, color: '#777' }}>
-                      {item.notes || '—'}
-                      {/inspect|get this checked/i.test(item.notes || '') && <Tip id="getChecked" />}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <p style={{ fontSize: 12, color: '#888', fontStyle: 'italic' }}>
-              No optional items selected. Check items below to add them.
-            </p>
-          )}
-        </div>
-
-        {upgradeItems.length > 0 && (
-          <div style={{ marginBottom: 24 }}>
-            <div className="section-head" style={sectionHeadStyle('#065f46', '#d1fae5', '✦')}>
-              Quick refresh — optional, often strong return ({upgradeItems.length})
-            </div>
-            <p style={{ fontSize: 12, color: '#555', marginTop: 0, marginBottom: 8 }}>
-              Cosmetic updates, not defects. Low cost, high buyer appeal.
-            </p>
-            <table style={tableStyle}>
-              <thead><tr>
-                <th style={th}>Item</th>
-                <th style={th}>Est. cost</th>
-                <th style={th}>Recoup %</th>
-              </tr></thead>
-              <tbody>
-                {upgradeItems.map((item, i) => (
-                  <tr key={i}>
-                    <td style={{ ...td, fontWeight: 500 }}>{item.display_name}</td>
-                    <td style={td} className="num"><CostCell item={item} customCosts={customCosts}
-                      editingCost={editingCost} setEditingCost={setEditingCost}
-                      onCostSave={handleCostSave} /></td>
-                    <td style={td}>{item.recoup_pct != null ? `${item.recoup_pct}%` : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* ── 5. Items not in this plan ── */}
-      {notIncluded.length > 0 && (
-        <section style={sectionStyle}>
-          <details>
-            <summary style={detailsLink}>
-              {notIncluded.length} item{notIncluded.length !== 1 ? 's' : ''} not in this plan — check to add
-            </summary>
-            <table style={{ ...tableStyle, marginTop: 8 }}>
-              <thead>
-                <tr>
-                  <th style={{ ...th, width: 28 }}></th>
-                  <th style={th}>Component</th>
-                  <th style={th}>Condition</th>
-                  <th style={th}>Why not included</th>
-                  <th style={th} className="num" title="Click any cost to enter your real quote">Cost estimate ✎</th>
-                  <th style={th}>Value return</th>
-                </tr>
-              </thead>
-              <tbody>
-                {notIncluded.map((item, i) => {
-                  const reason = skipReason(item, selectedPlan)
-                  const label  = item.effective_recoup_label || (item.recoup_pct != null ? `${item.recoup_pct?.toFixed(0)}%` : '—')
-                  return (
-                  <tr key={i}>
-                    <td style={{ ...td, textAlign: 'center' }}>
-                      <input type="checkbox" checked={false}
-                        onChange={() => toggleItem(item.component_id)}
-                        className="no-print"
-                        style={{ cursor: 'pointer' }} />
-                    </td>
-                    <td style={td}>{item.display_name}</td>
-                    <td style={{ ...td, fontSize: 11 }}>{item.condition_detected || '—'}</td>
-                    <td style={{ ...td, fontSize: 11, color: '#888' }}>
-                      {reason}
-                      {reason.startsWith('Below ROI') && <Tip id="belowROI" />}
-                      {/inspect|get this checked/i.test(reason) && <Tip id="getChecked" />}
-                    </td>
-                    <td style={td} className="num">
-                      <CostCell
-                        item={item}
-                        customCosts={customCosts}
-                        editingCost={editingCost}
-                        setEditingCost={setEditingCost}
-                        onCostSave={handleCostSave}
-                      />
-                    </td>
-                    <td style={{ ...td, fontSize: 11 }}>
-                      {label}
-                      {label === 'enables sale / removes discount' && <Tip id="enablesSale" />}
-                    </td>
-                  </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </details>
-        </section>
-      )}
-
-      {/* ── 6. Estimated market value ── */}
+      {/* ── 2. Estimated market value ── */}
       <section style={sectionStyle}>
         <h3 style={h3}>Estimated market value</h3>
         <div style={gridStyle}>
           <Stat label="Low"  value={fmt(val.low)} />
           <Stat label="Mid"  value={fmt(val.mid)} highlight />
           <Stat label="High" value={fmt(val.high)} />
-          {val.avm_avg   && <Stat label="AVM avg"    value={fmt(val.avm_avg)} />}
+          {val.avm_avg    && <Stat label="AVM avg"    value={fmt(val.avm_avg)} />}
           {val.confidence && <Stat label="Confidence" value={`${(val.confidence * 100).toFixed(0)}%`} />}
         </div>
         {val.note && <p style={noteStyle}>{val.note}</p>}
-        <div style={{ display:'flex', alignItems:'center', gap:12, marginTop:10, flexWrap:'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
           {attomMeta.comp_count > 0 ? (
-            <span style={{ fontSize:12, color:'#6b7280' }}>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>
               {attomMeta.comp_count} comp{attomMeta.comp_count !== 1 ? 's' : ''} from ATTOM
               {attomMeta.comp_radius_miles ? ` within ${attomMeta.comp_radius_miles} mi` : ''}
               {attomMeta.avm_as_of ? ` · AVM as of ${attomMeta.avm_as_of}` : ''}
             </span>
           ) : (
-            <span style={{ fontSize:12, color:'#9ca3af' }}>Market data from ATTOM</span>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>Market data from ATTOM</span>
           )}
           <button
             onClick={handleRefetchMarket}
             disabled={refetching}
             style={{
-              fontSize:11, padding:'2px 8px', borderRadius:4,
-              border:'1px solid #d1d5db', background:'#f9fafb',
-              color:'#374151', cursor: refetching ? 'not-allowed' : 'pointer',
+              fontSize: 11, padding: '2px 8px', borderRadius: 4,
+              border: '1px solid #d1d5db', background: '#f9fafb',
+              color: '#374151', cursor: refetching ? 'not-allowed' : 'pointer',
               opacity: refetching ? 0.6 : 1,
             }}
           >
@@ -956,61 +794,76 @@ export default function ResultsStep({ sessionId }) {
         </div>
       </section>
 
-      {/* ── 7. Comparable sales ── */}
+      {/* ── 3. Comparable sales ── */}
       {val.comp_detail?.length > 0 && (() => {
-        const comps   = val.comp_detail
-        const avgSold = comps.reduce((s, c) => s + c.price, 0) / comps.length
-        const avgPpsf = comps.reduce((s, c) => s + c.actual_ppsf, 0) / comps.length
-        const distComps = comps.filter(c => c.distance_mi != null)
-        const avgDist = distComps.length
-          ? distComps.reduce((s, c) => s + c.distance_mi, 0) / distComps.length
-          : null
+        const comps = val.comp_detail
+        function colAvgC(arr, fn) {
+          const vals = arr.map(fn).filter(v => v != null && !isNaN(v) && isFinite(v))
+          return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null
+        }
+        const hasCol    = field => comps.some(c => c[field] != null && c[field] !== '' && c[field] !== false)
+        const hasBeds   = hasCol('beds')
+        const hasBaths  = hasCol('baths')
+        const hasYrBlt  = hasCol('year_built')
+        const hasDistMi = hasCol('distance_mi')
+        const hasNote   = comps.some(c => c.note && c.note !== '')
+        const avgSold   = colAvgC(comps, c => c.price)
+        const avgPpsf   = colAvgC(comps, c => c.actual_ppsf)
+        const avgSqft   = colAvgC(comps, c => c.sqft)
+        const avgDist   = hasDistMi ? colAvgC(comps, c => c.distance_mi) : null
+        const avgBeds   = hasBeds   ? colAvgC(comps, c => c.beds)  : null
+        const avgBaths  = hasBaths  ? colAvgC(comps, c => c.baths) : null
         return (
           <section style={sectionStyle}>
             <h3 style={h3}>Comparable sales used in valuation</h3>
             <div style={gridStyle}>
               <Stat label="Comps"          value={comps.length} />
               <Stat label="Avg sold price" value={fmt(avgSold)} highlight />
-              <Stat label="Avg cost/ft²"  value={`$${avgPpsf.toFixed(0)}`} />
-              {avgDist != null && <Stat label="Avg distance" value={`${avgDist.toFixed(2)} mi`} />}
+              <Stat label="Avg cost/ft²"  value={avgPpsf ? `$${avgPpsf.toFixed(0)}` : '—'} />
+              {avgSqft && <Stat label="Avg living ft²" value={Math.round(avgSqft).toLocaleString()} />}
             </div>
             <table style={tableStyle}>
               <thead><tr>
                 <th style={th}>Address</th>
-                <th style={{...th, textAlign:'right'}}>Beds</th>
-                <th style={{...th, textAlign:'right'}}>Baths</th>
-                <th style={{...th, textAlign:'right'}}>Living ft²</th>
-                <th style={{...th, textAlign:'right'}}>Year Built</th>
-                <th style={{...th, textAlign:'right'}}>Sold Price</th>
-                <th style={{...th, textAlign:'right'}}>Cost/ft²</th>
+                {hasBeds   && <th style={{ ...th, textAlign: 'right' }}>Beds</th>}
+                {hasBaths  && <th style={{ ...th, textAlign: 'right' }}>Baths</th>}
+                <th style={{ ...th, textAlign: 'right' }}>Living ft²</th>
+                {hasYrBlt  && <th style={{ ...th, textAlign: 'right' }}>Year Built</th>}
+                <th style={{ ...th, textAlign: 'right' }}>Sold Price</th>
+                <th style={{ ...th, textAlign: 'right' }}>Cost/ft²</th>
                 <th style={th}>Sold Date</th>
-                <th style={{...th, textAlign:'right'}}>Dist (mi)</th>
-                <th style={{...th, textAlign:'right'}}>Weight</th>
-                <th style={th}>Note</th>
+                {hasDistMi && <th style={{ ...th, textAlign: 'right' }}>Dist (mi)</th>}
+                <th style={{ ...th, textAlign: 'right' }}>Weight</th>
+                {hasNote   && <th style={th}>Note</th>}
               </tr></thead>
               <tbody>
                 {comps.map((c, i) => (
                   <tr key={i}>
                     <td style={td}>{c.address}</td>
-                    <td style={{...td, textAlign:'right'}}>{c.beds ?? '—'}</td>
-                    <td style={{...td, textAlign:'right'}}>{c.baths ?? '—'}</td>
-                    <td style={{...td, textAlign:'right'}}>{c.sqft ? Number(c.sqft).toLocaleString() : '—'}</td>
-                    <td style={{...td, textAlign:'right'}}>{c.year_built ?? '—'}</td>
-                    <td style={{...td, textAlign:'right'}}>{fmt(c.price)}</td>
-                    <td style={{...td, textAlign:'right'}}>${c.actual_ppsf?.toFixed(0)}</td>
-                    <td style={td}>{c.sold || '—'}</td>
-                    <td style={{...td, textAlign:'right'}}>{c.distance_mi != null ? c.distance_mi.toFixed(2) : '—'}</td>
-                    <td style={{...td, textAlign:'right'}}>{(c.weight * 100).toFixed(1)}%</td>
-                    <td style={td}>{c.note || '—'}</td>
+                    {hasBeds   && <td style={{ ...td, textAlign: 'right' }}>{c.beds ?? '—'}</td>}
+                    {hasBaths  && <td style={{ ...td, textAlign: 'right' }}>{c.baths ?? '—'}</td>}
+                    <td style={{ ...td, textAlign: 'right' }}>{c.sqft ? Number(c.sqft).toLocaleString() : '—'}</td>
+                    {hasYrBlt  && <td style={{ ...td, textAlign: 'right' }}>{c.year_built ?? '—'}</td>}
+                    <td style={{ ...td, textAlign: 'right' }}>{fmt(c.price)}</td>
+                    <td style={{ ...td, textAlign: 'right' }}>{c.actual_ppsf ? `$${c.actual_ppsf.toFixed(0)}` : '—'}</td>
+                    <td style={td}>{c.sold_date || c.sold || '—'}</td>
+                    {hasDistMi && <td style={{ ...td, textAlign: 'right' }}>{c.distance_mi != null ? c.distance_mi.toFixed(2) : '—'}</td>}
+                    <td style={{ ...td, textAlign: 'right' }}>{c.weight != null ? `${(c.weight * 100).toFixed(1)}%` : '—'}</td>
+                    {hasNote   && <td style={td}>{c.note || '—'}</td>}
                   </tr>
                 ))}
-                <tr style={{ background: '#f9fafb', fontWeight: 600, borderTop: '2px solid #e5e7eb' }}>
-                  <td style={td} colSpan={5}>Average</td>
-                  <td style={{...td, textAlign:'right'}}>{fmt(avgSold)}</td>
-                  <td style={{...td, textAlign:'right'}}>${avgPpsf.toFixed(0)}</td>
-                  <td style={td}>—</td>
-                  <td style={{...td, textAlign:'right'}}>{avgDist != null ? avgDist.toFixed(2) : '—'}</td>
-                  <td style={td} colSpan={2}></td>
+                <tr style={{ background: '#f9fafb', fontWeight: 500, borderTop: '2px solid #e5e7eb' }}>
+                  <td style={td}>Average</td>
+                  {hasBeds   && <td style={{ ...td, textAlign: 'right' }}>{avgBeds  != null ? avgBeds.toFixed(1)  : '—'}</td>}
+                  {hasBaths  && <td style={{ ...td, textAlign: 'right' }}>{avgBaths != null ? avgBaths.toFixed(1) : '—'}</td>}
+                  <td style={{ ...td, textAlign: 'right' }}>{avgSqft ? Math.round(avgSqft).toLocaleString() : '—'}</td>
+                  {hasYrBlt  && <td style={td}></td>}
+                  <td style={{ ...td, textAlign: 'right' }}>{fmt(avgSold)}</td>
+                  <td style={{ ...td, textAlign: 'right' }}>{avgPpsf ? `$${avgPpsf.toFixed(0)}` : '—'}</td>
+                  <td style={td}></td>
+                  {hasDistMi && <td style={{ ...td, textAlign: 'right' }}>{avgDist != null ? avgDist.toFixed(2) : '—'}</td>}
+                  <td style={td}></td>
+                  {hasNote   && <td style={td}></td>}
                 </tr>
               </tbody>
             </table>
@@ -1018,7 +871,7 @@ export default function ResultsStep({ sessionId }) {
         )
       })()}
 
-      {/* ── 8. Active listings ── */}
+      {/* ── 4. Active listings ── */}
       <section style={sectionStyle}>
         <h3 style={h3}>
           Active listings{activeCount > 0 ? ` — ${activeCount} active` : ''}
@@ -1037,8 +890,9 @@ export default function ResultsStep({ sessionId }) {
           const alAvgPrice = colAvg(activeOnly, l => l.list_price || null)
           const alAvgPpsf  = colAvg(activeOnly, l => (l.sqft > 0 && l.list_price) ? l.list_price / l.sqft : null)
           const alAvgSqft  = colAvg(activeOnly, l => l.sqft || null)
-          const alAvgBeds  = colAvg(activeOnly, l => l.beds || null)
+          const alAvgBeds  = colAvg(activeOnly, l => l.beds  || null)
           const alAvgBaths = colAvg(activeOnly, l => l.baths || null)
+          const alAvgDom   = colAvg(activeOnly, l => l.dom != null ? l.dom : null)
           return (
             <>
               {activeListings.length > 0 && (
@@ -1047,8 +901,7 @@ export default function ResultsStep({ sessionId }) {
                   <Stat label="Avg list price" value={fmt(alAvgPrice)} highlight />
                   <Stat label="Avg cost/ft²"  value={alAvgPpsf ? `$${alAvgPpsf.toFixed(0)}` : '—'} />
                   <Stat label="Avg living ft²" value={alAvgSqft ? Math.round(alAvgSqft).toLocaleString() : '—'} />
-                  <Stat label="Avg beds"       value={alAvgBeds  ? alAvgBeds.toFixed(1)  : '—'} />
-                  <Stat label="Avg baths"      value={alAvgBaths ? alAvgBaths.toFixed(1) : '—'} />
+                  {alAvgDom != null && <Stat label="Avg DOM" value={Math.round(alAvgDom)} />}
                 </div>
               )}
               {activeListings.length === 0 ? (
@@ -1057,12 +910,12 @@ export default function ResultsStep({ sessionId }) {
                 <table style={tableStyle}>
                   <thead><tr>
                     <th style={th}>Address</th>
-                    <th style={{...th, textAlign:'right'}}>Beds</th>
-                    <th style={{...th, textAlign:'right'}}>Baths</th>
-                    <th style={{...th, textAlign:'right'}}>Living ft²</th>
-                    <th style={{...th, textAlign:'right'}}>List Price</th>
-                    <th style={{...th, textAlign:'right'}}>Cost/ft²</th>
-                    <th style={{...th, textAlign:'right'}}>DOM</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Beds</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Baths</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Living ft²</th>
+                    <th style={{ ...th, textAlign: 'right' }}>List Price</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Cost/ft²</th>
+                    <th style={{ ...th, textAlign: 'right' }}>DOM</th>
                     <th style={th}>Status</th>
                   </tr></thead>
                   <tbody>
@@ -1072,15 +925,15 @@ export default function ResultsStep({ sessionId }) {
                       return (
                         <tr key={i} style={{ opacity: isPending ? 0.75 : 1 }}>
                           <td style={td}>{l.address}</td>
-                          <td style={{...td, textAlign:'right'}}>{l.beds ?? '—'}</td>
-                          <td style={{...td, textAlign:'right'}}>{l.baths ?? '—'}</td>
-                          <td style={{...td, textAlign:'right'}}>{l.sqft?.toLocaleString() || '—'}</td>
-                          <td style={{...td, textAlign:'right'}}>{fmt(l.list_price)}</td>
-                          <td style={{...td, textAlign:'right'}}>{ppsf ? `$${ppsf}` : '—'}</td>
-                          <td style={{...td, textAlign:'right'}}>{l.dom ?? '—'}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>{l.beds ?? '—'}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>{l.baths ?? '—'}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>{l.sqft?.toLocaleString() || '—'}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>{fmt(l.list_price)}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>{ppsf ? `$${ppsf}` : '—'}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>{l.dom ?? '—'}</td>
                           <td style={td}>
                             <span style={{
-                              fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 3,
+                              fontSize: 11, fontWeight: 500, padding: '2px 6px', borderRadius: 3,
                               background: isPending ? '#fef3c7' : '#d1fae5',
                               color:      isPending ? '#92400e' : '#065f46',
                             }}>
@@ -1091,14 +944,15 @@ export default function ResultsStep({ sessionId }) {
                       )
                     })}
                     {activeOnly.length > 0 && (
-                      <tr style={{ background: '#f9fafb', fontWeight: 600, borderTop: '2px solid #e5e7eb' }}>
-                        <td style={td}>Average (active only)</td>
-                        <td style={{...td, textAlign:'right'}}>{alAvgBeds  ? alAvgBeds.toFixed(1)  : '—'}</td>
-                        <td style={{...td, textAlign:'right'}}>{alAvgBaths ? alAvgBaths.toFixed(1) : '—'}</td>
-                        <td style={{...td, textAlign:'right'}}>{alAvgSqft ? Math.round(alAvgSqft).toLocaleString() : '—'}</td>
-                        <td style={{...td, textAlign:'right'}}>{fmt(alAvgPrice)}</td>
-                        <td style={{...td, textAlign:'right'}}>{alAvgPpsf ? `$${alAvgPpsf.toFixed(0)}` : '—'}</td>
-                        <td style={td} colSpan={2}></td>
+                      <tr style={{ background: '#f9fafb', fontWeight: 500, borderTop: '2px solid #e5e7eb' }}>
+                        <td style={td}>Avg (active)</td>
+                        <td style={{ ...td, textAlign: 'right' }}>{alAvgBeds  ? alAvgBeds.toFixed(1)  : '—'}</td>
+                        <td style={{ ...td, textAlign: 'right' }}>{alAvgBaths ? alAvgBaths.toFixed(1) : '—'}</td>
+                        <td style={{ ...td, textAlign: 'right' }}>{alAvgSqft ? Math.round(alAvgSqft).toLocaleString() : '—'}</td>
+                        <td style={{ ...td, textAlign: 'right' }}>{fmt(alAvgPrice)}</td>
+                        <td style={{ ...td, textAlign: 'right' }}>{alAvgPpsf ? `$${alAvgPpsf.toFixed(0)}` : '—'}</td>
+                        <td style={{ ...td, textAlign: 'right' }}>{alAvgDom != null ? Math.round(alAvgDom) : '—'}</td>
+                        <td style={td}></td>
                       </tr>
                     )}
                   </tbody>
@@ -1109,16 +963,17 @@ export default function ResultsStep({ sessionId }) {
         })()}
       </section>
 
-      {/* ── 9. July sold history ── */}
+      {/* ── 5. Homes sold in July ── */}
       {salesHistory.length > 0 && (
         <section style={sectionStyle}>
-          <h3 style={h3}>July sold history</h3>
-          <p style={{...noteStyle, marginTop:0, marginBottom:10,
-                      borderLeft: '3px solid #b45309', paddingLeft: 8, color: '#92400e'}}>
+          <h3 style={h3}>Homes sold in July</h3>
+          <p style={{ ...noteStyle, marginTop: 0, marginBottom: 10,
+                      borderLeft: '3px solid #b45309', paddingLeft: 8, color: '#92400e' }}>
             <strong>Context only — not used in valuation.</strong> Homes that sold in July
             (2022–2025) within 1 mile. Shows seasonal pricing patterns.
           </p>
           {(() => {
+            const okCount   = salesHistory.filter(r => r.list_price_status === 'ok').length
             const hasNoData = salesHistory.some(r => r.list_price_status === 'no_data')
             function histSold(r) { return r.sold_price ?? r.price ?? null }
             function histDate(r) { return r.sold_date ?? r.sold ?? '—' }
@@ -1127,22 +982,29 @@ export default function ResultsStep({ sessionId }) {
               const sp = histSold(r); const sq = r.sqft
               return (sp && sq > 0) ? Math.round(sp / sq) : null
             }
-            const soldVals = salesHistory.map(histSold).filter(v => v != null)
-            const avgSold  = soldVals.length ? soldVals.reduce((s,v) => s+v, 0) / soldVals.length : null
-            const ppsfVals = salesHistory.map(histPpsf).filter(v => v != null)
-            const avgPpsf  = ppsfVals.length ? ppsfVals.reduce((s,v) => s+v, 0) / ppsfVals.length : null
+            function colAvgH(arr, fn) {
+              const vals = arr.map(fn).filter(v => v != null && !isNaN(v) && isFinite(v))
+              return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null
+            }
+            const avgSoldH  = colAvgH(salesHistory, histSold)
+            const avgPpsfH  = colAvgH(salesHistory, histPpsf)
+            const avgSqftH  = colAvgH(salesHistory, r => r.sqft  || null)
+            const avgBedsH  = colAvgH(salesHistory, r => r.beds  || null)
+            const avgBathsH = colAvgH(salesHistory, r => r.baths || null)
+            const lpRows    = salesHistory.filter(r => r.list_price_status === 'ok')
+            const avgLpH    = colAvgH(lpRows, r => r.list_price || null)
             return (
               <>
                 <table style={tableStyle}>
                   <thead><tr>
                     <th style={th}>Address</th>
-                    <th style={{...th, textAlign:'right'}}>Beds</th>
-                    <th style={{...th, textAlign:'right'}}>Baths</th>
-                    <th style={{...th, textAlign:'right'}}>Living ft²</th>
-                    <th style={{...th, textAlign:'right'}}>Year Built</th>
-                    <th style={{...th, textAlign:'right'}}>List Price</th>
-                    <th style={{...th, textAlign:'right'}}>Sold Price</th>
-                    <th style={{...th, textAlign:'right'}}>Cost/ft²</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Beds</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Baths</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Living ft²</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Year Built</th>
+                    <th style={{ ...th, textAlign: 'right' }}>List Price</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Sold Price</th>
+                    <th style={{ ...th, textAlign: 'right' }}>Cost/ft²</th>
                     <th style={th}>Sold Date</th>
                   </tr></thead>
                   <tbody>
@@ -1154,30 +1016,35 @@ export default function ResultsStep({ sessionId }) {
                       return (
                         <tr key={i}>
                           <td style={td}>{r.address}</td>
-                          <td style={{...td, textAlign:'right'}}>{r.beds ?? '—'}</td>
-                          <td style={{...td, textAlign:'right'}}>{r.baths ?? '—'}</td>
-                          <td style={{...td, textAlign:'right'}}>{r.sqft ? Number(r.sqft).toLocaleString() : '—'}</td>
-                          <td style={{...td, textAlign:'right'}}>{r.year_built ?? '—'}</td>
-                          <td style={{...td, textAlign:'right'}}>
+                          <td style={{ ...td, textAlign: 'right' }}>{r.beds ?? '—'}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>{r.baths ?? '—'}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>{r.sqft ? Number(r.sqft).toLocaleString() : '—'}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>{r.year_built ?? '—'}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>
                             {lpOk ? fmt(r.list_price) : lpNd ? '—*' : '—'}
                           </td>
-                          <td style={{...td, textAlign:'right'}}>{fmt(sp)}</td>
-                          <td style={{...td, textAlign:'right'}}>{ppsf ? `$${ppsf}` : '—'}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>{fmt(sp)}</td>
+                          <td style={{ ...td, textAlign: 'right' }}>{ppsf ? `$${ppsf}` : '—'}</td>
                           <td style={td}>{histDate(r)}</td>
                         </tr>
                       )
                     })}
-                    <tr style={{ background: '#f9fafb', fontWeight: 600, borderTop: '2px solid #e5e7eb' }}>
-                      <td style={td} colSpan={6}>Average</td>
-                      <td style={{...td, textAlign:'right'}}>{fmt(avgSold)}</td>
-                      <td style={{...td, textAlign:'right'}}>{avgPpsf ? `$${avgPpsf.toFixed(0)}` : '—'}</td>
-                      <td style={td}>—</td>
+                    <tr style={{ background: '#f9fafb', fontWeight: 500, borderTop: '2px solid #e5e7eb' }}>
+                      <td style={td}>Average</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{avgBedsH  != null ? avgBedsH.toFixed(1)  : '—'}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{avgBathsH != null ? avgBathsH.toFixed(1) : '—'}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{avgSqftH ? Math.round(avgSqftH).toLocaleString() : '—'}</td>
+                      <td style={td}></td>
+                      <td style={{ ...td, textAlign: 'right' }}>{avgLpH ? fmt(avgLpH) : '—'}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{fmt(avgSoldH)}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{avgPpsfH ? `$${avgPpsfH.toFixed(0)}` : '—'}</td>
+                      <td style={td}></td>
                     </tr>
                   </tbody>
                 </table>
                 {hasNoData && (
                   <p style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
-                    * Address not found in listing database — list price unavailable for this sale.
+                    * List price unavailable for some sales; shown where records exist ({okCount} of {salesHistory.length}).
                   </p>
                 )}
               </>
@@ -1192,7 +1059,7 @@ export default function ResultsStep({ sessionId }) {
         <span>Pre-Listing Decision Tool</span>
       </div>
 
-      {/* ── 10. Adjust inputs ── */}
+      {/* ── Adjust inputs ── */}
       <section className="no-print" style={sectionStyle}>
         <h3 style={h3}>Adjust inputs</h3>
         <p style={noteStyle}>

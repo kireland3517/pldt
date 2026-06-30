@@ -166,6 +166,7 @@ def compute_as_is_range(property_inputs: dict) -> dict:
             "leverage":       round(hat, 4),
             "note":           c.get("note", ""),
             "sold":           c.get("sold", ""),
+            "sold_date":      c.get("sold", ""),   # alias; YYYY-MM from _ym()
         })
 
     bw_used = max(150.0, 0.10 * subject_sqft)
@@ -176,6 +177,4 @@ def compute_as_is_range(property_inputs: dict) -> dict:
         "high":           float(high),
         "avm_avg":        float(avm_avg) if avm_avg is not None else None,
         "ppsf_predicted": round(ppsf_pred, 2),
-        "confidence":     round(confidence, 2),
-        "note":           " ".join(notes),
-        "
+        "confidence": 
