@@ -440,7 +440,7 @@ def fetch_rentcast_listings(
             dom   = int(row.get("daysOnMarket") or 0) or None
             listings.append({
                 "address": row.get("formattedAddress", ""),
-                "price":   int(row.get("price") or 0),
+                "list_price": int(row.get("price") or 0),
                 "sqft":    sqft,
                 "beds":    beds,
                 "baths":   baths,
