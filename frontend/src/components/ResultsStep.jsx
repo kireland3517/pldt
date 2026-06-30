@@ -467,7 +467,7 @@ export default function ResultsStep({ sessionId }) {
           {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
         </div>
         <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', fontSize: 13, marginBottom: 10 }}>
-          <div><strong>As-is value (mid):</strong> {fmt(val.mid)}</div>
+          <div><strong>Estimated market value (mid):</strong> {fmt(val.mid)}</div>
           <div><strong>Plan:</strong> {PLAN_LABELS[selectedPlan]}</div>
           <div><strong>Est. net proceeds:</strong> {fmt(selNet.net_proceeds)}</div>
           <div><strong>Commission:</strong> {commission}%</div>
@@ -512,165 +512,6 @@ export default function ResultsStep({ sessionId }) {
         </span>
       </div>
 
-      {/* ── Valuation ── */}
-      <section style={sectionStyle}>
-        <h3 style={h3}>As-is value estimate</h3>
-        <div style={gridStyle}>
-          <Stat label="Low"  value={fmt(val.low)} />
-          <Stat label="Mid"  value={fmt(val.mid)} highlight />
-          <Stat label="High" value={fmt(val.high)} />
-          {val.avm_avg   && <Stat label="AVM avg"    value={fmt(val.avm_avg)} />}
-          {val.confidence && <Stat label="Confidence" value={`${(val.confidence * 100).toFixed(0)}%`} />}
-        </div>
-        {val.note && <p style={noteStyle}>{val.note}</p>}
-        {/* ── ATTOM data source line + refresh control ── */}
-        <div style={{ display:'flex', alignItems:'center', gap:12, marginTop:10, flexWrap:'wrap' }}>
-          {attomMeta.comp_count > 0 ? (
-            <span style={{ fontSize:12, color:'#6b7280' }}>
-              {attomMeta.comp_count} comp{attomMeta.comp_count !== 1 ? 's' : ''} from ATTOM
-              {attomMeta.comp_radius_miles ? ` within ${attomMeta.comp_radius_miles} mi` : ''}
-              {attomMeta.avm_as_of ? ` · AVM as of ${attomMeta.avm_as_of}` : ''}
-            </span>
-          ) : (
-            <span style={{ fontSize:12, color:'#9ca3af' }}>Market data from ATTOM</span>
-          )}
-          <button
-            onClick={handleRefetchMarket}
-            disabled={refetching}
-            style={{
-              fontSize:11, padding:'2px 8px', borderRadius:4,
-              border:'1px solid #d1d5db', background:'#f9fafb',
-              color:'#374151', cursor: refetching ? 'not-allowed' : 'pointer',
-              opacity: refetching ? 0.6 : 1,
-            }}
-          >
-            {refetching ? 'Refreshing…' : 'Refresh market data'}
-          </button>
-        </div>
-
-        {val.comp_detail?.length > 0 && (
-          <details style={{ marginTop: 12 }}>
-            <summary style={detailsLink}>Comparable sales used in valuation</summary>
-            <table style={tableStyle}>
-              <thead><tr>
-                <th style={th}>Address</th>
-                <th style={th}>Sold</th>
-                <th style={{...th, textAlign:'right'}}>Price</th>
-                <th style={{...th, textAlign:'right'}}>$/sqft</th>
-                <th style={{...th, textAlign:'right'}}>Weight</th>
-                <th style={th}>Note</th>
-              </tr></thead>
-              <tbody>
-                {val.comp_detail.map((c, i) => (
-                  <tr key={i}>
-                    <td style={td}>{c.address}</td>
-                    <td style={td}>{c.sold || '—'}</td>
-                    <td style={{...td, textAlign:'right'}}>{fmt(c.price)}</td>
-                    <td style={{...td, textAlign:'right'}}>${c.actual_ppsf?.toFixed(0)}</td>
-                    <td style={{...td, textAlign:'right'}}>{(c.weight * 100).toFixed(1)}%</td>
-                    <td style={td}>{c.note || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </details>
-        )}
-
-        {/* ── Active listings (manually entered) ── */}
-        <details style={{ marginTop: 12 }}>
-          <summary style={detailsLink}>
-            Active Listings (manually entered){activeCount > 0 ? ` — ${activeCount} active` : ''}
-          </summary>
-          {attomMeta.active_listings_basis && (
-            <p style={{ ...noteStyle, marginTop: 6, fontStyle: 'italic' }}>
-              {attomMeta.active_listings_basis}
-            </p>
-          )}
-          {activeListings.length === 0 ? (
-            <p style={noteStyle}>No active listings entered.</p>
-          ) : (
-            <table style={tableStyle}>
-              <thead><tr>
-                <th style={th}>Address</th>
-                <th style={{...th, textAlign:'right'}}>List Price</th>
-                <th style={{...th, textAlign:'right'}}>$/sqft</th>
-                <th style={{...th, textAlign:'right'}}>Sqft</th>
-                <th style={{...th, textAlign:'right'}}>Beds/Ba</th>
-                <th style={th}>Status</th>
-                <th style={th}>Verified</th>
-              </tr></thead>
-              <tbody>
-                {activeListings.map((l, i) => {
-                  const isPending = l.status === 'pending'
-                  return (
-                    <tr key={i} style={{ opacity: isPending ? 0.75 : 1 }}>
-                      <td style={td}>{l.address}</td>
-                      <td style={{...td, textAlign:'right'}}>{fmt(l.list_price)}</td>
-                      <td style={{...td, textAlign:'right'}}>
-                        {l.sqft ? `$${Math.round(l.list_price / l.sqft)}` : '—'}
-                      </td>
-                      <td style={{...td, textAlign:'right'}}>{l.sqft?.toLocaleString() || '—'}</td>
-                      <td style={{...td, textAlign:'right'}}>{l.beds}/{l.baths}</td>
-                      <td style={td}>
-                        <span style={{
-                          fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 3,
-                          background: isPending ? '#fef3c7' : '#d1fae5',
-                          color:      isPending ? '#92400e' : '#065f46',
-                        }}>
-                          {isPending ? 'Pending' : 'Active'}
-                        </span>
-                        {' '}
-                        <span style={{ fontSize: 10, color: '#9ca3af', fontWeight: 400 }}>
-                          manual
-                        </span>
-                      </td>
-                      <td style={{...td, fontSize: 11, color: '#6b7280'}}>{l.verified_on || '—'}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          )}
-        </details>
-
-        {/* ── 5-year neighborhood sales history: context only ── */}
-        {salesHistory.length > 0 && (
-          <details style={{ marginTop: 12 }}>
-            <summary style={detailsLink}>5-year neighborhood sales history — context only</summary>
-            <p style={{...noteStyle, marginTop:6,
-                        borderLeft: '3px solid #b45309',
-                        paddingLeft: 8, color: '#92400e'}}>
-              <strong>Context only — not used in valuation.</strong> The as-is value estimate
-              above is computed from recent comparable sales only. Older sales reflect different
-              market conditions and would distort today's estimate if included. This history
-              is shown so the seller can see how the neighborhood has trended over time.
-            </p>
-            <table style={tableStyle}>
-              <thead><tr>
-                <th style={th}>Sold</th>
-                <th style={th}>Address</th>
-                <th style={{...th, textAlign:'right'}}>Price</th>
-                <th style={{...th, textAlign:'right'}}>$/sqft</th>
-                <th style={{...th, textAlign:'right'}}>Sqft</th>
-                <th style={{...th, textAlign:'right'}}>Beds/Ba</th>
-              </tr></thead>
-              <tbody>
-                {[...salesHistory].sort((a,b) => b.sold.localeCompare(a.sold)).map((s, i) => (
-                  <tr key={i}>
-                    <td style={td}>{s.sold}</td>
-                    <td style={td}>{s.address}</td>
-                    <td style={{...td, textAlign:'right'}}>{fmt(s.price)}</td>
-                    <td style={{...td, textAlign:'right'}}>${s.ppsf || Math.round(s.price/s.sqft)}</td>
-                    <td style={{...td, textAlign:'right'}}>{s.sqft?.toLocaleString()}</td>
-                    <td style={{...td, textAlign:'right'}}>{s.beds}/{s.baths}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </details>
-        )}
-      </section>
-
       {/* ── Underwater ── */}
       {isUnderwater && (
         <section style={{ ...sectionStyle, borderColor: '#f0c040', background: '#fffbe6' }}>
@@ -694,7 +535,7 @@ export default function ResultsStep({ sessionId }) {
         </section>
       )}
 
-      {/* ── Plan cards ── */}
+      {/* ── 1. Plans ── */}
       <section style={sectionStyle}>
         <h3 style={h3}>Plans — estimated net proceeds</h3>
         <p style={noteStyle}>
@@ -714,14 +555,13 @@ export default function ResultsStep({ sessionId }) {
                 <div className="plan-card-label" style={{ fontWeight: 700, marginBottom: 4, fontSize: 13 }}>
                   {PLAN_LABELS[key]}
                 </div>
-                <div className="plan-card-desc" style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>
+                <div className="plan-card-desc" style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>
                   {PLAN_DESCRIPTIONS[key]}
                 </div>
-                <div className="plan-card-net" style={{ fontSize: 15, fontWeight: 700, color: isNeg ? '#c00' : '#1a7f37' }}>
-                  {fmt(net.net_proceeds)}
-                </div>
+                <div style={{ fontSize: 11, color: '#888', marginBottom: 1 }}>Suggested listing price (estimate)</div>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{fmt(p.adjusted_sale_price)}</div>
                 {p.value_lift_capped > 0 && (
-                  <div style={{ fontSize: 11, color: '#1a7f37', marginTop: 2 }}>
+                  <div style={{ fontSize: 11, color: '#1a7f37', marginBottom: 4 }}>
                     +{fmt(p.value_lift_capped)} est. value lift
                     {p.value_lift_cap_binding && (
                       <span style={{ marginLeft: 4, color: '#b45309', cursor: 'default' }}>
@@ -730,8 +570,24 @@ export default function ResultsStep({ sessionId }) {
                     )}
                   </div>
                 )}
+                {net.line_items && (
+                  <div style={{ fontSize: 11, borderTop: '1px solid #e5e7eb', paddingTop: 8, marginTop: 4 }}
+                       onClick={e => e.stopPropagation()}>
+                    {net.line_items.map((li, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2, color: '#555' }}>
+                        <span>&minus; {li.label}</span>
+                        <span>({fmt(li.amount)})</span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6,
+                                  borderTop: '1px solid #e5e7eb', fontWeight: 700 }}>
+                      <span>Est. net proceeds</span>
+                      <span style={{ color: isNeg ? '#c00' : '#1a7f37' }}>{fmt(net.net_proceeds)}</span>
+                    </div>
+                  </div>
+                )}
                 {p.plan_roi_pct != null && (
-                  <div style={{ fontSize: 11, color: p.plan_roi_pct >= 0 ? '#1a7f37' : '#c00', marginTop: 2 }}>
+                  <div style={{ fontSize: 11, color: p.plan_roi_pct >= 0 ? '#1a7f37' : '#c00', marginTop: 6 }}>
                     Plan ROI: {p.plan_roi_pct > 0 ? '+' : ''}{p.plan_roi_pct}%
                     <Tip id="planROI" />
                   </div>
@@ -739,16 +595,6 @@ export default function ResultsStep({ sessionId }) {
                 <div style={{ fontSize: 11, color: '#777', marginTop: 4 }}>
                   {p.dom?.estimated_dom} days est. · {p.item_count} items
                 </div>
-                {net.line_items && (
-                  <details style={{ marginTop: 8 }} onClick={e => e.stopPropagation()}>
-                    <summary style={detailsLink}>Closing cost breakdown</summary>
-                    {net.line_items.map((li, i) => (
-                      <div key={i} style={{ fontSize: 11, display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
-                        <span>{li.label}</span><span>{fmt(li.amount)}</span>
-                      </div>
-                    ))}
-                  </details>
-                )}
               </div>
             )
           })}
@@ -763,7 +609,7 @@ export default function ResultsStep({ sessionId }) {
         </p>
       </section>
 
-      {/* ── Repair plan ── */}
+      {/* ── 2. Required-to-sell repairs ── */}
       <section style={sectionStyle}>
         {/* Plan tabs + live net bar */}
         <div className="no-print" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
@@ -776,8 +622,6 @@ export default function ResultsStep({ sessionId }) {
               </button>
             ))}
           </div>
-
-          {/* Live net proceeds readout */}
           <div style={liveNetBand(netDelta, isCustomized || hasCustomCosts)}>
             <span style={{ fontSize: 11, color: '#555', marginRight: 8 }}>
               {isCustomized || hasCustomCosts ? 'Custom plan — est. net:' : `${PLAN_LABELS[selectedPlan]} est. net:`}
@@ -800,15 +644,14 @@ export default function ResultsStep({ sessionId }) {
             )}
           </div>
         </div>
-
         <p className="no-print" style={{ fontSize: 11, color: '#888', marginTop: -8, marginBottom: 14 }}>
           Check or uncheck items to build your own plan. Click any cost to enter a real quote.
           {(isCustomized || hasCustomCosts) && ' Live estimate is approximate — use "Apply and recompute" below for the exact number.'}
         </p>
 
-        {/* ── Section 1: Required to sell ── */}
-        {floorItems.length > 0 && (
-          <div style={{ marginBottom: 24 }}>
+        <h3 style={h3}>Required-to-sell repairs</h3>
+        {floorItems.length > 0 ? (
+          <div>
             <div className="section-head" style={sectionHeadStyle('#7c2d12', '#fef3c7', '⚠')}>
               Required to sell<Tip id="requiredToSell" /> — {floorItems.length} item{floorItems.length !== 1 ? 's' : ''}
             </div>
@@ -853,77 +696,77 @@ export default function ResultsStep({ sessionId }) {
               Required-to-sell total: <strong>{fmtRange(floor.cost_low, floor.cost_high)}</strong>
               {floor.cost_mid ? ` (mid ${fmt(floor.cost_mid)})` : ''}
             </div>
-
-            {/* Lender gate: two-path choice for major financing-blocking items */}
-            {lenderGate && (
-              <div style={{
-                marginTop: 16,
-                padding: '14px 16px',
-                background: '#fafafa',
-                border: '1px solid #e5e7eb',
-                borderRadius: 6,
-                fontSize: 13,
-              }}>
-                <div style={{ fontWeight: 600, marginBottom: 8, color: '#374151' }}>
-                  Why these repairs matter for your buyer pool<Tip id="investorPath" />
-                </div>
-                <p style={{ margin: '0 0 10px', color: '#4b5563', lineHeight: 1.5 }}>
-                  Homes with active foundation moisture, roof leaks, or serious electrical issues
-                  usually can&apos;t be purchased with a conventional mortgage, FHA, or VA loan —
-                  because the lender requires the issue resolved before they&apos;ll fund the loan.
-                  That means most buyers can&apos;t purchase as-is, so the home tends to sell
-                  to a cash investor at a lower price.
-                  Addressing these before listing keeps your home open to all buyers.
-                </p>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
-                  <div style={{
-                    flex: 1, minWidth: 160,
-                    padding: '10px 14px',
-                    background: '#f0fdf4',
-                    border: '1px solid #bbf7d0',
-                    borderRadius: 5,
-                  }}>
-                    <div style={{ fontSize: 11, color: '#166534', fontWeight: 600, marginBottom: 3 }}>
-                      REPAIRED — financed buyers included
-                    </div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: '#15803d' }}>
-                      {fmt(lenderGate.retail_price)}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>
-                      Full buyer pool, retail comp pricing
-                    </div>
-                  </div>
-                  <div style={{
-                    flex: 1, minWidth: 160,
-                    padding: '10px 14px',
-                    background: '#f9fafb',
-                    border: '1px solid #d1d5db',
-                    borderRadius: 5,
-                  }}>
-                    <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 3 }}>
-                      LEFT AS-IS — cash investors only
-                    </div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: '#374151' }}>
-                      ~{fmt(lenderGate.investor_price)}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#6b7280', marginTop: 3 }}>
-                      Approx. 75% of retail — investor pricing
-                    </div>
-                  </div>
-                </div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>
-                  Estimated gap: <strong style={{ color: '#374151' }}>{fmt(lenderGate.investor_gap)}</strong>
-                  {' '}between the two paths.
-                  Selling as-is to a cash buyer is a real option — for speed or when repair
-                  isn&apos;t feasible. This comparison shows the trade-off so you can choose with
-                  full information.
-                </div>
-              </div>
-            )}
           </div>
+        ) : (
+          <p style={{ fontSize: 13, color: '#888' }}>No required-to-sell items found.</p>
         )}
+        {floorItems.length === 0 && discretionary.length === 0 && notIncluded.length === 0 && upgradeItems.length === 0 && (
+          <p style={{ fontSize: 13, color: '#888' }}>
+            No repair items found. Make sure photos have been tagged and the questionnaire submitted.
+          </p>
+        )}
+      </section>
 
-        {/* ── Section 2: Optional — increases value ── */}
+      {/* ── 3. Why repairs matter ── */}
+      {lenderGate && (
+        <section style={sectionStyle}>
+          <div style={{ fontWeight: 600, marginBottom: 8, color: '#374151', fontSize: 14 }}>
+            Why these repairs matter for your buyer pool<Tip id="investorPath" />
+          </div>
+          <p style={{ margin: '0 0 10px', color: '#4b5563', lineHeight: 1.5, fontSize: 13 }}>
+            Homes with active foundation moisture, roof leaks, or serious electrical issues
+            usually can&apos;t be purchased with a conventional mortgage, FHA, or VA loan —
+            because the lender requires the issue resolved before they&apos;ll fund the loan.
+            That means most buyers can&apos;t purchase as-is, so the home tends to sell
+            to a cash investor at a lower price.
+            Addressing these before listing keeps your home open to all buyers.
+          </p>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+            <div style={{
+              flex: 1, minWidth: 160, padding: '10px 14px',
+              background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 5,
+            }}>
+              <div style={{ fontSize: 11, color: '#166534', fontWeight: 600, marginBottom: 3 }}>
+                If repaired: financed buyers, retail pricing
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#15803d' }}>
+                {fmt(lenderGate.retail_price)}
+              </div>
+              <div style={{ fontSize: 11, color: '#4b5563', marginTop: 3 }}>
+                Full buyer pool, retail comp pricing
+              </div>
+            </div>
+            <div style={{
+              flex: 1, minWidth: 160, padding: '10px 14px',
+              background: '#f9fafb', border: '1px solid #d1d5db', borderRadius: 5,
+            }}>
+              <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 3 }}>
+                If left as-is: cash investors, ~75% of retail
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#374151' }}>
+                ~{fmt(lenderGate.investor_price)}
+              </div>
+              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 3 }}>
+                Approx. 75% of retail — investor pricing
+              </div>
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>
+            Estimated gap: <strong style={{ color: '#374151' }}>{fmt(lenderGate.investor_gap)}</strong>
+            {' '}between the two paths.
+            Selling as-is to a cash buyer is a real option — for speed or when repair
+            isn&apos;t feasible. This comparison shows the trade-off so you can choose with
+            full information.
+          </div>
+          <div style={{ fontSize: 12, color: '#888', marginTop: 8 }}>
+            See plan cards above to compare net proceeds for each path.
+          </div>
+        </section>
+      )}
+
+      {/* ── 4. Optional / value-increasing items ── */}
+      <section style={sectionStyle}>
+        <h3 style={h3}>Optional / value-increasing items</h3>
         <div style={{ marginBottom: 20 }}>
           <div className="section-head" style={sectionHeadStyle('#14532d', '#f0fdf4', '↑')}>
             Optional — increases value<Tip id="optionalValue" />
@@ -935,7 +778,6 @@ export default function ResultsStep({ sessionId }) {
             Not required to sell. Included because the value return justifies the spend.
             Uncheck any item to remove it from your plan and see the live net adjust.
           </p>
-
           {discretionary.length > 0 ? (
             <table style={tableStyle}>
               <thead>
@@ -989,8 +831,39 @@ export default function ResultsStep({ sessionId }) {
           )}
         </div>
 
-        {/* ── Section 3: Not included ── */}
-        {notIncluded.length > 0 && (
+        {upgradeItems.length > 0 && (
+          <div style={{ marginBottom: 24 }}>
+            <div className="section-head" style={sectionHeadStyle('#065f46', '#d1fae5', '✦')}>
+              Quick refresh — optional, often strong return ({upgradeItems.length})
+            </div>
+            <p style={{ fontSize: 12, color: '#555', marginTop: 0, marginBottom: 8 }}>
+              Cosmetic updates, not defects. Low cost, high buyer appeal.
+            </p>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={th}>Item</th>
+                <th style={th}>Est. cost</th>
+                <th style={th}>Recoup %</th>
+              </tr></thead>
+              <tbody>
+                {upgradeItems.map((item, i) => (
+                  <tr key={i}>
+                    <td style={{ ...td, fontWeight: 500 }}>{item.display_name}</td>
+                    <td style={td} className="num"><CostCell item={item} customCosts={customCosts}
+                      editingCost={editingCost} setEditingCost={setEditingCost}
+                      onCostSave={handleCostSave} /></td>
+                    <td style={td}>{item.recoup_pct != null ? `${item.recoup_pct}%` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ── 5. Items not in this plan ── */}
+      {notIncluded.length > 0 && (
+        <section style={sectionStyle}>
           <details>
             <summary style={detailsLink}>
               {notIncluded.length} item{notIncluded.length !== 1 ? 's' : ''} not in this plan — check to add
@@ -1044,59 +917,288 @@ export default function ResultsStep({ sessionId }) {
               </tbody>
             </table>
           </details>
-        )}
+        </section>
+      )}
 
-        {/* ── Upgrade / quick refresh items ── */}
-        {upgradeItems.length > 0 && (
-          <div style={{ marginBottom: 24 }}>
-            <div className="section-head" style={sectionHeadStyle('#065f46', '#d1fae5', '✦')}>
-              Quick refresh — optional, often strong return ({upgradeItems.length})
-            </div>
-            <p style={{ fontSize: 12, color: '#555', marginTop: 0, marginBottom: 8 }}>
-              Cosmetic updates, not defects. Low cost, high buyer appeal.
-            </p>
-            <table style={tableStyle}>
-              <thead><tr>
-                <th style={th}>Item</th>
-                <th style={th}>Est. cost</th>
-                <th style={th}>Recoup %</th>
-              </tr></thead>
-              <tbody>
-                {upgradeItems.map((item, i) => (
-                  <tr key={i}>
-                    <td style={{ ...td, fontWeight: 500 }}>{item.display_name}</td>
-                    <td style={td} className="num"><CostCell item={item} customCosts={customCosts}
-                      editingCost={editingCost} setEditingCost={setEditingCost}
-                      onCostSave={handleCostSave} /></td>
-                    <td style={td}>{item.recoup_pct != null ? `${item.recoup_pct}%` : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {floorItems.length === 0 && discretionary.length === 0 && notIncluded.length === 0 && (
-          <p style={{ fontSize: 13, color: '#888' }}>
-            No repair items found. Make sure photos have been tagged and the questionnaire submitted.
-          </p>
-        )}
+      {/* ── 6. Estimated market value ── */}
+      <section style={sectionStyle}>
+        <h3 style={h3}>Estimated market value</h3>
+        <div style={gridStyle}>
+          <Stat label="Low"  value={fmt(val.low)} />
+          <Stat label="Mid"  value={fmt(val.mid)} highlight />
+          <Stat label="High" value={fmt(val.high)} />
+          {val.avm_avg   && <Stat label="AVM avg"    value={fmt(val.avm_avg)} />}
+          {val.confidence && <Stat label="Confidence" value={`${(val.confidence * 100).toFixed(0)}%`} />}
+        </div>
+        {val.note && <p style={noteStyle}>{val.note}</p>}
+        <div style={{ display:'flex', alignItems:'center', gap:12, marginTop:10, flexWrap:'wrap' }}>
+          {attomMeta.comp_count > 0 ? (
+            <span style={{ fontSize:12, color:'#6b7280' }}>
+              {attomMeta.comp_count} comp{attomMeta.comp_count !== 1 ? 's' : ''} from ATTOM
+              {attomMeta.comp_radius_miles ? ` within ${attomMeta.comp_radius_miles} mi` : ''}
+              {attomMeta.avm_as_of ? ` · AVM as of ${attomMeta.avm_as_of}` : ''}
+            </span>
+          ) : (
+            <span style={{ fontSize:12, color:'#9ca3af' }}>Market data from ATTOM</span>
+          )}
+          <button
+            onClick={handleRefetchMarket}
+            disabled={refetching}
+            style={{
+              fontSize:11, padding:'2px 8px', borderRadius:4,
+              border:'1px solid #d1d5db', background:'#f9fafb',
+              color:'#374151', cursor: refetching ? 'not-allowed' : 'pointer',
+              opacity: refetching ? 0.6 : 1,
+            }}
+          >
+            {refetching ? 'Refreshing…' : 'Refresh market data'}
+          </button>
+        </div>
       </section>
 
-      {/* ── Print footer (fixed, appears on every printed page) ── */}
+      {/* ── 7. Comparable sales ── */}
+      {val.comp_detail?.length > 0 && (() => {
+        const comps   = val.comp_detail
+        const avgSold = comps.reduce((s, c) => s + c.price, 0) / comps.length
+        const avgPpsf = comps.reduce((s, c) => s + c.actual_ppsf, 0) / comps.length
+        const distComps = comps.filter(c => c.distance_mi != null)
+        const avgDist = distComps.length
+          ? distComps.reduce((s, c) => s + c.distance_mi, 0) / distComps.length
+          : null
+        return (
+          <section style={sectionStyle}>
+            <h3 style={h3}>Comparable sales used in valuation</h3>
+            <div style={gridStyle}>
+              <Stat label="Comps"          value={comps.length} />
+              <Stat label="Avg sold price" value={fmt(avgSold)} highlight />
+              <Stat label="Avg cost/ft²"  value={`$${avgPpsf.toFixed(0)}`} />
+              {avgDist != null && <Stat label="Avg distance" value={`${avgDist.toFixed(2)} mi`} />}
+            </div>
+            <table style={tableStyle}>
+              <thead><tr>
+                <th style={th}>Address</th>
+                <th style={{...th, textAlign:'right'}}>Beds</th>
+                <th style={{...th, textAlign:'right'}}>Baths</th>
+                <th style={{...th, textAlign:'right'}}>Living ft²</th>
+                <th style={{...th, textAlign:'right'}}>Year Built</th>
+                <th style={{...th, textAlign:'right'}}>Sold Price</th>
+                <th style={{...th, textAlign:'right'}}>Cost/ft²</th>
+                <th style={th}>Sold Date</th>
+                <th style={{...th, textAlign:'right'}}>Dist (mi)</th>
+                <th style={{...th, textAlign:'right'}}>Weight</th>
+                <th style={th}>Note</th>
+              </tr></thead>
+              <tbody>
+                {comps.map((c, i) => (
+                  <tr key={i}>
+                    <td style={td}>{c.address}</td>
+                    <td style={{...td, textAlign:'right'}}>{c.beds ?? '—'}</td>
+                    <td style={{...td, textAlign:'right'}}>{c.baths ?? '—'}</td>
+                    <td style={{...td, textAlign:'right'}}>{c.sqft ? Number(c.sqft).toLocaleString() : '—'}</td>
+                    <td style={{...td, textAlign:'right'}}>{c.year_built ?? '—'}</td>
+                    <td style={{...td, textAlign:'right'}}>{fmt(c.price)}</td>
+                    <td style={{...td, textAlign:'right'}}>${c.actual_ppsf?.toFixed(0)}</td>
+                    <td style={td}>{c.sold || '—'}</td>
+                    <td style={{...td, textAlign:'right'}}>{c.distance_mi != null ? c.distance_mi.toFixed(2) : '—'}</td>
+                    <td style={{...td, textAlign:'right'}}>{(c.weight * 100).toFixed(1)}%</td>
+                    <td style={td}>{c.note || '—'}</td>
+                  </tr>
+                ))}
+                <tr style={{ background: '#f9fafb', fontWeight: 600, borderTop: '2px solid #e5e7eb' }}>
+                  <td style={td} colSpan={5}>Average</td>
+                  <td style={{...td, textAlign:'right'}}>{fmt(avgSold)}</td>
+                  <td style={{...td, textAlign:'right'}}>${avgPpsf.toFixed(0)}</td>
+                  <td style={td}>—</td>
+                  <td style={{...td, textAlign:'right'}}>{avgDist != null ? avgDist.toFixed(2) : '—'}</td>
+                  <td style={td} colSpan={2}></td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+        )
+      })()}
+
+      {/* ── 8. Active listings ── */}
+      <section style={sectionStyle}>
+        <h3 style={h3}>
+          Active listings{activeCount > 0 ? ` — ${activeCount} active` : ''}
+        </h3>
+        {attomMeta.active_listings_basis && (
+          <p style={{ ...noteStyle, marginTop: 0, marginBottom: 8, fontStyle: 'italic' }}>
+            {attomMeta.active_listings_basis}
+          </p>
+        )}
+        {(() => {
+          const activeOnly = activeListings.filter(l => l.status === 'active')
+          function colAvg(arr, fn) {
+            const vals = arr.map(fn).filter(v => v != null && !isNaN(v) && isFinite(v))
+            return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null
+          }
+          const alAvgPrice = colAvg(activeOnly, l => l.list_price || null)
+          const alAvgPpsf  = colAvg(activeOnly, l => (l.sqft > 0 && l.list_price) ? l.list_price / l.sqft : null)
+          const alAvgSqft  = colAvg(activeOnly, l => l.sqft || null)
+          const alAvgBeds  = colAvg(activeOnly, l => l.beds || null)
+          const alAvgBaths = colAvg(activeOnly, l => l.baths || null)
+          return (
+            <>
+              {activeListings.length > 0 && (
+                <div style={gridStyle}>
+                  <Stat label="Active"         value={activeCount} />
+                  <Stat label="Avg list price" value={fmt(alAvgPrice)} highlight />
+                  <Stat label="Avg cost/ft²"  value={alAvgPpsf ? `$${alAvgPpsf.toFixed(0)}` : '—'} />
+                  <Stat label="Avg living ft²" value={alAvgSqft ? Math.round(alAvgSqft).toLocaleString() : '—'} />
+                  <Stat label="Avg beds"       value={alAvgBeds  ? alAvgBeds.toFixed(1)  : '—'} />
+                  <Stat label="Avg baths"      value={alAvgBaths ? alAvgBaths.toFixed(1) : '—'} />
+                </div>
+              )}
+              {activeListings.length === 0 ? (
+                <p style={noteStyle}>No active listings entered.</p>
+              ) : (
+                <table style={tableStyle}>
+                  <thead><tr>
+                    <th style={th}>Address</th>
+                    <th style={{...th, textAlign:'right'}}>Beds</th>
+                    <th style={{...th, textAlign:'right'}}>Baths</th>
+                    <th style={{...th, textAlign:'right'}}>Living ft²</th>
+                    <th style={{...th, textAlign:'right'}}>List Price</th>
+                    <th style={{...th, textAlign:'right'}}>Cost/ft²</th>
+                    <th style={{...th, textAlign:'right'}}>DOM</th>
+                    <th style={th}>Status</th>
+                  </tr></thead>
+                  <tbody>
+                    {activeListings.map((l, i) => {
+                      const isPending = l.status === 'pending'
+                      const ppsf = (l.sqft > 0 && l.list_price) ? Math.round(l.list_price / l.sqft) : null
+                      return (
+                        <tr key={i} style={{ opacity: isPending ? 0.75 : 1 }}>
+                          <td style={td}>{l.address}</td>
+                          <td style={{...td, textAlign:'right'}}>{l.beds ?? '—'}</td>
+                          <td style={{...td, textAlign:'right'}}>{l.baths ?? '—'}</td>
+                          <td style={{...td, textAlign:'right'}}>{l.sqft?.toLocaleString() || '—'}</td>
+                          <td style={{...td, textAlign:'right'}}>{fmt(l.list_price)}</td>
+                          <td style={{...td, textAlign:'right'}}>{ppsf ? `$${ppsf}` : '—'}</td>
+                          <td style={{...td, textAlign:'right'}}>{l.dom ?? '—'}</td>
+                          <td style={td}>
+                            <span style={{
+                              fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 3,
+                              background: isPending ? '#fef3c7' : '#d1fae5',
+                              color:      isPending ? '#92400e' : '#065f46',
+                            }}>
+                              {isPending ? 'Pending' : 'Active'}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {activeOnly.length > 0 && (
+                      <tr style={{ background: '#f9fafb', fontWeight: 600, borderTop: '2px solid #e5e7eb' }}>
+                        <td style={td}>Average (active only)</td>
+                        <td style={{...td, textAlign:'right'}}>{alAvgBeds  ? alAvgBeds.toFixed(1)  : '—'}</td>
+                        <td style={{...td, textAlign:'right'}}>{alAvgBaths ? alAvgBaths.toFixed(1) : '—'}</td>
+                        <td style={{...td, textAlign:'right'}}>{alAvgSqft ? Math.round(alAvgSqft).toLocaleString() : '—'}</td>
+                        <td style={{...td, textAlign:'right'}}>{fmt(alAvgPrice)}</td>
+                        <td style={{...td, textAlign:'right'}}>{alAvgPpsf ? `$${alAvgPpsf.toFixed(0)}` : '—'}</td>
+                        <td style={td} colSpan={2}></td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </>
+          )
+        })()}
+      </section>
+
+      {/* ── 9. July sold history ── */}
+      {salesHistory.length > 0 && (
+        <section style={sectionStyle}>
+          <h3 style={h3}>July sold history</h3>
+          <p style={{...noteStyle, marginTop:0, marginBottom:10,
+                      borderLeft: '3px solid #b45309', paddingLeft: 8, color: '#92400e'}}>
+            <strong>Context only — not used in valuation.</strong> Homes that sold in July
+            (2022–2025) within 1 mile. Shows seasonal pricing patterns.
+          </p>
+          {(() => {
+            const hasNoData = salesHistory.some(r => r.list_price_status === 'no_data')
+            function histSold(r) { return r.sold_price ?? r.price ?? null }
+            function histDate(r) { return r.sold_date ?? r.sold ?? '—' }
+            function histPpsf(r) {
+              if (r.ppsf) return r.ppsf
+              const sp = histSold(r); const sq = r.sqft
+              return (sp && sq > 0) ? Math.round(sp / sq) : null
+            }
+            const soldVals = salesHistory.map(histSold).filter(v => v != null)
+            const avgSold  = soldVals.length ? soldVals.reduce((s,v) => s+v, 0) / soldVals.length : null
+            const ppsfVals = salesHistory.map(histPpsf).filter(v => v != null)
+            const avgPpsf  = ppsfVals.length ? ppsfVals.reduce((s,v) => s+v, 0) / ppsfVals.length : null
+            return (
+              <>
+                <table style={tableStyle}>
+                  <thead><tr>
+                    <th style={th}>Address</th>
+                    <th style={{...th, textAlign:'right'}}>Beds</th>
+                    <th style={{...th, textAlign:'right'}}>Baths</th>
+                    <th style={{...th, textAlign:'right'}}>Living ft²</th>
+                    <th style={{...th, textAlign:'right'}}>Year Built</th>
+                    <th style={{...th, textAlign:'right'}}>List Price</th>
+                    <th style={{...th, textAlign:'right'}}>Sold Price</th>
+                    <th style={{...th, textAlign:'right'}}>Cost/ft²</th>
+                    <th style={th}>Sold Date</th>
+                  </tr></thead>
+                  <tbody>
+                    {salesHistory.map((r, i) => {
+                      const sp   = histSold(r)
+                      const ppsf = histPpsf(r)
+                      const lpOk = r.list_price_status === 'ok'
+                      const lpNd = r.list_price_status === 'no_data'
+                      return (
+                        <tr key={i}>
+                          <td style={td}>{r.address}</td>
+                          <td style={{...td, textAlign:'right'}}>{r.beds ?? '—'}</td>
+                          <td style={{...td, textAlign:'right'}}>{r.baths ?? '—'}</td>
+                          <td style={{...td, textAlign:'right'}}>{r.sqft ? Number(r.sqft).toLocaleString() : '—'}</td>
+                          <td style={{...td, textAlign:'right'}}>{r.year_built ?? '—'}</td>
+                          <td style={{...td, textAlign:'right'}}>
+                            {lpOk ? fmt(r.list_price) : lpNd ? '—*' : '—'}
+                          </td>
+                          <td style={{...td, textAlign:'right'}}>{fmt(sp)}</td>
+                          <td style={{...td, textAlign:'right'}}>{ppsf ? `$${ppsf}` : '—'}</td>
+                          <td style={td}>{histDate(r)}</td>
+                        </tr>
+                      )
+                    })}
+                    <tr style={{ background: '#f9fafb', fontWeight: 600, borderTop: '2px solid #e5e7eb' }}>
+                      <td style={td} colSpan={6}>Average</td>
+                      <td style={{...td, textAlign:'right'}}>{fmt(avgSold)}</td>
+                      <td style={{...td, textAlign:'right'}}>{avgPpsf ? `$${avgPpsf.toFixed(0)}` : '—'}</td>
+                      <td style={td}>—</td>
+                    </tr>
+                  </tbody>
+                </table>
+                {hasNoData && (
+                  <p style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
+                    * Address not found in listing database — list price unavailable for this sale.
+                  </p>
+                )}
+              </>
+            )
+          })()}
+        </section>
+      )}
+
+      {/* ── Print footer ── */}
       <div className="print-footer" style={{ display: 'none' }}>
         <span>{result.address || 'Pre-Listing Decision Report'}</span>
         <span>Pre-Listing Decision Tool</span>
       </div>
 
-      {/* ── Adjust inputs ── */}
+      {/* ── 10. Adjust inputs ── */}
       <section className="no-print" style={sectionStyle}>
         <h3 style={h3}>Adjust inputs</h3>
         <p style={noteStyle}>
           Changing these recalculates the exact net proceeds from the backend.
           The live estimate above is an approximation — use this for the precise number.
         </p>
-
         <label style={labelStyle}>
           Commission rate: <strong>{commission}%</strong>
           <input type="range" min={1} max={8} step={0.5}
@@ -1105,7 +1207,6 @@ export default function ResultsStep({ sessionId }) {
             style={{ marginLeft: 8, verticalAlign: 'middle' }}
           />
         </label>
-
         <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>
             Mortgage payoff — total: <strong>{fmt(payoffTotal)}</strong>
@@ -1113,20 +1214,21 @@ export default function ResultsStep({ sessionId }) {
           <p style={{ fontSize: 12, color: '#666', margin: '0 0 8px' }}>
             Include all balances. Forgetting a HELOC or lien is the most common source of a wrong net number.
           </p>
-          {[
-            { label: 'Primary mortgage',              val: payoffPrimary,   set: setPayoffPrimary },
-            { label: 'Second mortgage / HELOC',       val: payoffSecondary, set: setPayoffSecondary },
-            { label: 'Liens, unpaid taxes, or other', val: payoffOther,     set: setPayoffOther },
-          ].map(({ label, val: v, set }) => (
-            <label key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13 }}>
-              <span style={{ width: 220 }}>{label}</span>
-              <input type="number" min={0} step={1000} value={v}
-                onChange={e => { set(+e.target.value); setKnobDirty(true) }}
-                style={{ width: 120, padding: '3px 6px', fontSize: 13 }} />
-            </label>
-          ))}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px' }}>
+            {[
+              { label: 'Primary mortgage',              val: payoffPrimary,   set: setPayoffPrimary },
+              { label: 'Second mortgage / HELOC',       val: payoffSecondary, set: setPayoffSecondary },
+              { label: 'Liens, unpaid taxes, or other', val: payoffOther,     set: setPayoffOther },
+            ].map(({ label, val: v, set }) => (
+              <label key={label} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
+                <span>{label}</span>
+                <input type="number" min={0} step={1000} value={v}
+                  onChange={e => { set(+e.target.value); setKnobDirty(true) }}
+                  style={{ width: 140, padding: '3px 6px', fontSize: 13 }} />
+              </label>
+            ))}
+          </div>
         </div>
-
         {knobDirty && (
           <button style={{ ...btnStyle, marginTop: 10 }} onClick={applyKnobs} disabled={applying}>
             {applying ? 'Recomputing…' : 'Apply and recompute'}
