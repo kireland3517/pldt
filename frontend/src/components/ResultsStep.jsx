@@ -338,12 +338,15 @@ function NetLineRow({
     >↺</button>
   )
 
-  // ── Commission: dollar line + slider, recomputes on release ──
+  // ── Commission: dollar line + slider, recomputes on release. Percent
+  // label is live-on-drag (reads `commission` state, which already updates
+  // on every onChange); dollar amount and net stay release-only via
+  // commitGlobal on mouseUp/touchEnd, unchanged.
   if (li.key === 'commission') {
     return (
       <div style={{ marginBottom: 10 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7280' }}>
-          {labelEl}
+          <span>{labelEl} — {commission.toFixed(1)}%</span>
           <span>({fmt(li.amount)}) {resetEl}</span>
         </div>
         <input
