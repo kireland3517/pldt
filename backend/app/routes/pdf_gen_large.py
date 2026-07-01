@@ -34,6 +34,16 @@ from reportlab.platypus import (
 )
 
 from ..db import get_db, TABLE
+from ..data_loader import ReferenceData
+from ..logic.custom_plan import build_custom_plan
+
+_ref: ReferenceData | None = None
+
+def _get_ref() -> ReferenceData:
+    global _ref
+    if _ref is None:
+        _ref = ReferenceData()
+    return _ref
 
 # ── Page geometry ─────────────────────────────────────────────────────────────
 
@@ -316,7 +326,29 @@ def generate_large_pdf(
     effective_ids       = floor_ids | effective_non_floor
 
     is_customized = custom_items is not None or bool(custom_costs)
-    display_net   = live_net if (is_customized and live_net is not None) else base_net
+
+    # STAGE 2 STEP 2: server-computed custom plan, never the frontend's
+    # live_net approximation. build_custom_plan reuses the SAME enriched
+    # rows / floor / valuation already cached in compute_result -- no
+    # re-derivation from instance_json needed here (PDF generation always
+    # runs after a fresh /compute). Value lift stays library-anchored;
+    # custom_costs only ever affects the repair-cost deduction below.
+    custom_result = None
+    if is_customized:
+        custom_result = build_custom_plan(
+            enriched_rows=repair_table,
+            floor_result=floor_result,
+            valuation=val,
+            closing_constants=_get_ref().sc_closing,
+            seller_inputs=session.get("seller_inputs") or {},
+            item_ids=effective_non_floor,
+            item_cost_overrides=custom_costs or {},
+            commission_rate=commission_rate,
+            has_hoa=session.get("has_hoa", False),
+        )
+        display_net = custom_result["net_proceeds"]["net_proceeds"]
+    else:
+        display_net = base_net
 
     floor_items, disc, not_in = _split(repair_table, floor_result, effective_ids)
 
@@ -536,30 +568,72 @@ def generate_large_pdf(
     # ════════════════════════════════════════════════════════════════════════
     story += _section("Estimated Net Proceeds")
 
-    line_items = base_np.get("line_items") or []
-    if line_items:
-        np_data = [[_p("Item","b"), _p("Amount","rb")]]
-        for i, li in enumerate(line_items):
-            is_last = i == len(line_items) - 1
-            lbl = li.get("label","")
-            amt = li.get("amount")
-            if is_last:
-                np_data.append([_p(lbl,"rb"), _amt(amt, bold=True)])
-            else:
-                np_data.append([_p(lbl,"n"), _neutral_amt(amt)])
+    if is_customized and custom_result is not None:
+        # STAGE 2 STEP 2: full custom line-item breakdown, computed
+        # server-side via build_custom_plan. These rows sum to the
+        # displayed net exactly -- see the reconciliation note below.
+        custom_np    = custom_result["net_proceeds"]
+        custom_lines = custom_np.get("line_items") or []
+        custom_net   = custom_np.get("net_proceeds")
 
-        if is_customized and live_net is not None and abs(live_net - base_net) > 0.5:
-            delta = live_net - base_net
-            np_data.append([_p("Custom plan adjustment","mu"), _neutral_amt(delta)])
-            np_data.append([_p("Adjusted Net Proceeds","rb"), _amt(live_net, bold=True)])
+        if custom_lines:
+            np_data = [[_p("Item", "b"), _p("Amount", "rb")]]
+            for li in custom_lines:
+                np_data.append([_p(li.get("label", ""), "n"), _neutral_amt(li.get("amount"))])
+            np_data.append([_p("Net Proceeds (custom plan)", "rb"), _amt(custom_net, bold=True)])
+            np_tbl = Table(np_data, colWidths=[5.0*inch, 2.0*inch], repeatRows=1)
+            np_tbl.setStyle(_tbl(len(np_data), bold_last=True))
+            story.append(np_tbl)
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(
+                "Gross sale price minus every deduction above equals Net Proceeds exactly. "
+                "Carrying cost is not estimated for a custom item set (no days-on-market "
+                "projection for an arbitrary combination) -- this line is omitted, not zeroed.",
+                S_MUTED,
+            ))
+        else:
+            story.append(Paragraph(
+                f"Estimated net proceeds (custom plan): {_fmt(custom_net)}", S_BODY
+            ))
 
-        np_tbl = Table(np_data, colWidths=[5.0*inch, 2.0*inch], repeatRows=1)
-        np_tbl.setStyle(_tbl(len(np_data), bold_last=True))
-        story.append(np_tbl)
+        uses_custom_cost = bool(custom_costs) and any(
+            item["component_id"] in custom_costs
+            for item in floor_items + disc
+        )
+        if uses_custom_cost:
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(
+                "* Cost marked with asterisk reflects an entered quote, used in the repair-cost "
+                "deduction above. Projected value lift stays anchored to standard cost data -- "
+                "an entered quote is never used to inflate the projected sale price.",
+                S_MUTED,
+            ))
     else:
-        story.append(Paragraph(
-            f"Estimated net proceeds ({plan_label}): {_fmt(display_net)}", S_BODY
-        ))
+        # UNCHANGED -- standard-plan path, byte-identical to pre-Step-2 rendering.
+        line_items = base_np.get("line_items") or []
+        if line_items:
+            np_data = [[_p("Item","b"), _p("Amount","rb")]]
+            for i, li in enumerate(line_items):
+                is_last = i == len(line_items) - 1
+                lbl = li.get("label","")
+                amt = li.get("amount")
+                if is_last:
+                    np_data.append([_p(lbl,"rb"), _amt(amt, bold=True)])
+                else:
+                    np_data.append([_p(lbl,"n"), _neutral_amt(amt)])
+
+            if is_customized and live_net is not None and abs(live_net - base_net) > 0.5:
+                delta = live_net - base_net
+                np_data.append([_p("Custom plan adjustment","mu"), _neutral_amt(delta)])
+                np_data.append([_p("Adjusted Net Proceeds","rb"), _amt(live_net, bold=True)])
+
+            np_tbl = Table(np_data, colWidths=[5.0*inch, 2.0*inch], repeatRows=1)
+            np_tbl.setStyle(_tbl(len(np_data), bold_last=True))
+            story.append(np_tbl)
+        else:
+            story.append(Paragraph(
+                f"Estimated net proceeds ({plan_label}): {_fmt(display_net)}", S_BODY
+            ))
 
     story.append(Spacer(1, 24))
 
