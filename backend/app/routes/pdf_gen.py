@@ -342,7 +342,11 @@ def generate_pdf(
             valuation=val,
             closing_constants=_get_ref().sc_closing,
             seller_inputs=session.get("seller_inputs") or {},
-            item_ids=effective_non_floor,
+            # STAGE 2 STEP 3: build_custom_plan no longer force-unions floor
+            # items (Change 1) -- this PDF download path doesn't offer a way
+            # to drop required items, so it must union them in itself here to
+            # keep its existing behavior (always include floor) unchanged.
+            item_ids=effective_ids,
             item_cost_overrides=custom_costs or {},
             commission_rate=commission_rate,
             has_hoa=session.get("has_hoa", False),

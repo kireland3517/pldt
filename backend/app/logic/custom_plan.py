@@ -49,14 +49,19 @@ def build_custom_plan(
     commission_rate: Optional[float] = None,
     has_hoa: bool = False,
     overrides: Optional[dict] = None,
+    added_items: Optional[list] = None,
 ) -> dict:
     """
     Build the Custom plan for an arbitrary checked-item set.
 
-    item_ids: component_ids the user checked (optional items only, or the
-    full set including required items -- either way, floor items are
-    force-unioned in below, so the caller does not need to worry about
-    accidentally dropping a required item).
+    item_ids: component_ids the caller wants included -- EVERY item, floor
+    or not. STAGE 2 STEP 3 (Change 1): floor items are NO LONGER
+    force-unioned in. A missing required item is honestly excluded from
+    value lift and repair cost, and if it's a major lender-blocking defect,
+    triggers lender_gate below. Callers that want the old "always include
+    required items" behavior (e.g. the PDF custom-download path in
+    pdf_gen.py, which doesn't offer a way to drop required items) must union
+    floor items into item_ids themselves before calling this.
 
     item_cost_overrides: {component_id: dollar_amount}. Affects repair-cost
     math only (see module docstring) -- never value lift.
@@ -66,19 +71,31 @@ def build_custom_plan(
     the same override lines for parity, though Step 3's UI may not wire this
     up for Custom initially.
 
+    added_items: STAGE 2 STEP 3 (Change 2). Optional list of
+    {"label": str, "cost": float} dicts for items the tool did not detect
+    (not present in enriched_rows). Cost-only: summed additively into the
+    repair-cost deduction below, AFTER _repair_cost_and_concessions_for_items
+    runs and completely outside _adjusted_sale_price_for_items -- so an
+    added item can never move value_lift_capped, structurally, not just by
+    convention. Same anti-inflation principle as library-anchored costs:
+    a number the user typed in must never inflate the projected sale price.
+
     Returns a dict in the same shape as one entry of
     optimizer.build_plans()'s return value (plans["leaner"], etc.), with
-    dom=None and carrying=None (not estimated for Custom -- parked decision).
+    dom=None and carrying=None (not estimated for Custom -- parked decision),
+    plus added_items / added_items_cost_total for the caller to render the
+    itemized ad-hoc-cost breakdown (compute_net_proceeds has no line-item
+    key for these; they fold into the existing "repair_cost" line).
     """
     item_cost_overrides = item_cost_overrides or {}
+    added_items = added_items or []
 
-    floor_ids = {i["component_id"] for i in floor_result.get("items", [])}
-    effective_ids = floor_ids | set(item_ids)
+    effective_ids = set(item_ids)
 
     base_mid = valuation["mid"]
     ceiling  = valuation.get("high", float("inf"))
 
-    adjusted_price, raw_uplift, cap_was_binding, lender_gate_items = (
+    adjusted_price, raw_uplift, cap_was_binding, lender_gate_items, missing_lender_items = (
         _adjusted_sale_price_for_items(base_mid, ceiling, enriched_rows, effective_ids)
     )
     value_lift_capped = round(adjusted_price - base_mid, 2)
@@ -86,6 +103,11 @@ def build_custom_plan(
     repair_cost_mid, concessions_total = _repair_cost_and_concessions_for_items(
         enriched_rows, floor_result, effective_ids, item_cost_overrides,
     )
+
+    # Change 2: ad-hoc cost-only items. Additive, outside the enriched_rows
+    # scope entirely -- structurally cannot touch value lift.
+    added_items_cost_total = round(sum(float(i.get("cost") or 0) for i in added_items), 2)
+    repair_cost_mid += added_items_cost_total
 
     np_result = compute_net_proceeds(
         sale_price=adjusted_price,
@@ -118,6 +140,8 @@ def build_custom_plan(
 
     lender_gate = None
     if lender_gate_items:
+        # UNCHANGED path: at least one major lender item IS included --
+        # same formula/shape as before Change 1.
         investor_price = round(adjusted_price * INVESTOR_CAP_RATE, -2)
         lender_gate = {
             "has_major_lender_items": True,
@@ -125,6 +149,30 @@ def build_custom_plan(
             "investor_price":         investor_price,
             "investor_gap":           round(adjusted_price - investor_price, 2),
             "items":                  lender_gate_items,
+        }
+    elif missing_lender_items:
+        # NEW (Change 1): a major lender-blocking item was dropped. adjusted_price
+        # here is already the honest "as left" price (no uplift for the missing
+        # item). retail_price is the HYPOTHETICAL "if repaired" price, computed
+        # by re-running the same uplift math with the missing items added back
+        # -- a second, cheap, pure-function call, not persisted anywhere.
+        missing_ids = {i["component_id"] for i in missing_lender_items}
+        hypothetical_ids = effective_ids | missing_ids
+        retail_price_hyp, _, _, _, _ = _adjusted_sale_price_for_items(
+            base_mid, ceiling, enriched_rows, hypothetical_ids
+        )
+        investor_price = round(retail_price_hyp * INVESTOR_CAP_RATE, -2)
+        lender_gate = {
+            "has_major_lender_items": True,
+            "retail_price":           round(retail_price_hyp, 2),
+            "investor_price":         investor_price,
+            "investor_gap":           round(retail_price_hyp - investor_price, 2),
+            "items":                  missing_lender_items,
+            "note": (
+                "These required items are not included in this custom plan. "
+                "Retail price shown is what repairing them would unlock; "
+                "investor price is the realistic ceiling while they remain undone."
+            ),
         }
 
     return {
@@ -142,4 +190,6 @@ def build_custom_plan(
         "included_items":           included,
         "item_count":               len(included),
         "lender_gate":              lender_gate,
+        "added_items":              added_items,
+        "added_items_cost_total":   added_items_cost_total,
     }

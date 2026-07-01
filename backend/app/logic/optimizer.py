@@ -224,10 +224,22 @@ def _adjusted_sale_price_for_items(
     the level-based _adjusted_sale_price wrapper unchanged. A future custom
     plan would call this directly with a checkbox-derived set.
 
-    Returns (adjusted_price, uncapped_uplift, cap_was_binding, lender_gate_items).
+    Returns (adjusted_price, uncapped_uplift, cap_was_binding, lender_gate_items,
+    missing_lender_items).
+
+    STAGE 2 STEP 3 (Change 1): added a 5th return value, missing_lender_items --
+    floor+investor-cap rows that are NOT in included_item_ids. Added because
+    Custom can now exclude required items (force-union removed in
+    custom_plan.py); when a major lender-blocking item is dropped, the caller
+    needs to know so it can raise an honest lender-gate warning instead of
+    silently producing a plan with no signal that the home may not qualify
+    for financed buyers. For the three standard plans (via _adjusted_sale_price
+    below), floor items are always in included_item_ids, so this list is
+    always empty there -- zero behavior change for build_plans().
     """
     uplift = 0.0
-    lender_gate_items = []   # major+lender items in this plan level
+    lender_gate_items = []    # major+lender items in this plan level, INCLUDED (unchanged meaning)
+    missing_lender_items = [] # NEW: major+lender floor items NOT included (Custom-only in practice)
 
     for row in enriched_rows:
         bv = row.get("better_value")
@@ -251,6 +263,13 @@ def _adjusted_sale_price_for_items(
 
         include = row["component_id"] in included_item_ids
 
+        # investor_cap_eligible + in_floor identifies a major lender-blocking
+        # defect regardless of whether this call includes it or not -- see
+        # recoup.py (investor_cap_eligible) and repair_replace.py, which sets
+        # in_floor == defect_qualifies_floor at construction (same fact, two
+        # field names).
+        is_investor_cap_floor = bool(row.get("investor_cap_eligible") and row.get("in_floor"))
+
         if include:
             if is_floor:
                 # Tier-multiplier recovery (A5 haircut model)
@@ -263,8 +282,7 @@ def _adjusted_sale_price_for_items(
                 # A minor defect in ELEC-01 (missing cover) has investor_cap_eligible=False.
                 # An unsafe panel in ELEC-01 has investor_cap_eligible=True.
                 # GAR-01/HVAC-01 etc. always False — no threshold in library.
-                if (row.get("investor_cap_eligible")
-                        and row.get("in_floor")):
+                if is_investor_cap_floor:
                     lender_gate_items.append({
                         "component_id":       row["component_id"],
                         "display_name":       row.get("display_name", row["component_id"]),
@@ -277,12 +295,25 @@ def _adjusted_sale_price_for_items(
                 # Discretionary upgrades: recoup_pct unchanged
                 recoup_pct = row.get("recoup_pct", 0) / 100.0
                 uplift += mid * recoup_pct
+        elif is_investor_cap_floor:
+            # NEW (Change 1): a major lender-blocking floor item was dropped
+            # from this item set. No uplift is added for it (honest — the
+            # work isn't being done), and the caller (custom_plan.py) uses
+            # this list to build a "you're leaving this unfixed" lender gate.
+            tier = row.get("severity_tier") or "minor"
+            missing_lender_items.append({
+                "component_id":      row["component_id"],
+                "display_name":      row.get("display_name", row["component_id"]),
+                "severity_tier":     tier,
+                "severity_detected": row.get("severity_detected", ""),
+                "library_cost_mid":  round(mid, 0),
+            })
 
     raw_price       = base_mid + uplift
     adjusted_price  = min(raw_price, ceiling)
     cap_was_binding = raw_price > ceiling
 
-    return adjusted_price, uplift, cap_was_binding, lender_gate_items
+    return adjusted_price, uplift, cap_was_binding, lender_gate_items, missing_lender_items
 
 
 def _adjusted_sale_price(
@@ -300,7 +331,14 @@ def _adjusted_sale_price(
     Returns (adjusted_price, uncapped_uplift, cap_was_binding, lender_gate_items).
     """
     included_item_ids = _value_lift_scope_ids(enriched_rows, level)
-    return _adjusted_sale_price_for_items(base_mid, ceiling, enriched_rows, included_item_ids)
+    adjusted_price, raw_uplift, cap_was_binding, lender_gate_items, _missing = (
+        _adjusted_sale_price_for_items(base_mid, ceiling, enriched_rows, included_item_ids)
+    )
+    # _missing (missing_lender_items) is always [] here -- every standard
+    # level always includes every floor item in included_item_ids. Discarded
+    # to keep this wrapper's signature/behavior byte-identical to before
+    # (locked by test_haircut.py / test_v1v2v3.py, which call this directly).
+    return adjusted_price, raw_uplift, cap_was_binding, lender_gate_items
 
 
 def _items_for_level(enriched_rows: list, floor_result: dict, level: str) -> list:

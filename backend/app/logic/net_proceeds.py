@@ -420,11 +420,6 @@ def _repair_cost_and_concessions_for_items(
     negative) ROI -- see custom_plan.py's guardrail. Nothing here floors or
     hides that.
 
-    Floor-based, like leaner/recommended (never do_everything's ungated
-    full-resum) -- floor items are always locked-in/required for Custom too,
-    so floor_result["cost_mid"] is always the base and floor rows are always
-    skipped in the per-item sum (already counted in that base).
-
     item_cost_overrides: optional {component_id: dollar_amount}. When
     present for a row, substitutes the row's own cost_mid_repair /
     cost_mid_replace in the REPAIR-COST sum only. Never used for value-lift
@@ -433,21 +428,54 @@ def _repair_cost_and_concessions_for_items(
     the projected sale price. custom_plan.py enforces this by never passing
     item_cost_overrides into that function.
 
+    STAGE 2 STEP 3 (Change 1): floor rows used to be a blind base
+    (floor_result["cost_mid"]) with every floor row skipped in the loop --
+    that silently charged 100% of floor cost regardless of included_item_ids,
+    which is wrong now that Custom can drop a required item. Floor rows are
+    now summed per-row, gated by included_item_ids exactly like every other
+    row, using the same repair/replace cost-basis choice floor.py uses
+    (repair preferred if better_value=="repair", else replace) plus the same
+    shared_structure dedup (an "owner" component's structure cost is not
+    double-counted under its "dependent"). Ownership is resolved against
+    the FULL set of floor-qualifying rows on the property (all_floor_ids),
+    not just the included ones, so a dependent can still find its owner even
+    if the owner itself was dropped. Edge case, not resolved by this change:
+    if the owner is dropped but the dependent is kept, the dependent's own
+    cost basis is used in full (it now carries its own structure cost since
+    the owner's work isn't happening) -- this is the accepted default per
+    product sign-off, flagged here rather than silently assumed elsewhere.
+
+    When every floor row is included, this reproduces floor_result["cost_mid"]
+    exactly: sum((lo_i+hi_i)/2) over included rows == (sum(lo_i)+sum(hi_i))/2
+    by linearity, which is how floor.py computes cost_mid. No rounding is
+    introduced at the per-row level, so the equality is exact, not approximate.
+
     Returns (repair_cost_mid, concessions_total).
     """
     item_cost_overrides = item_cost_overrides or {}
     concessions_total = 0.0
-    repair_cost_mid = floor_result["cost_mid"]
+    repair_cost_mid = 0.0
+
+    all_floor_ids = {r["component_id"] for r in enriched_rows if r.get("defect_qualifies_floor")}
 
     for row in enriched_rows:
         cid = row["component_id"]
-        if row.get("defect_qualifies_floor"):
-            continue  # already counted in floor_result["cost_mid"]
         if cid not in included_item_ids:
             continue
         bv = row.get("better_value")
         override = item_cost_overrides.get(cid)
-        if bv in ("repair", "replace", "upgrade"):
+        is_floor = row.get("defect_qualifies_floor")
+
+        if is_floor:
+            shared = row.get("shared_structure")
+            if shared and shared in all_floor_ids and shared in included_item_ids:
+                # This component's structure cost is already counted under
+                # its owner (also included) -- same dedup rule as floor.py.
+                continue
+            default_mid = _floor_row_cost_mid(row)
+            mid = override if override is not None else default_mid
+            repair_cost_mid += mid
+        elif bv in ("repair", "replace", "upgrade"):
             default_mid = (
                 row.get("cost_mid_repair") if bv in ("repair", "upgrade")
                 else row.get("cost_mid_replace")
@@ -460,3 +488,20 @@ def _repair_cost_and_concessions_for_items(
             concessions_total += mid / 2  # credit is typically ~50% of repair
 
     return repair_cost_mid, concessions_total
+
+
+def _floor_row_cost_mid(row: dict) -> float:
+    """
+    STAGE 2 STEP 3 (Change 1): one floor row's own contributing cost,
+    mirroring floor.py's compute_floor() cost-basis choice exactly (repair
+    preferred when better_value=="repair", else replace, falling back to
+    the other path's range if the preferred one is missing).
+    """
+    better_value = row.get("better_value", "repair")
+    if better_value == "repair":
+        lo = row.get("repair_low")  or row.get("replace_low")  or 0
+        hi = row.get("repair_high") or row.get("replace_high") or 0
+    else:
+        lo = row.get("replace_low")  or row.get("repair_low")  or 0
+        hi = row.get("replace_high") or row.get("repair_high") or 0
+    return (lo + hi) / 2

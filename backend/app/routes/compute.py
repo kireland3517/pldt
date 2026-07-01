@@ -482,9 +482,17 @@ def update_override(session_id: str, body: OverrideUpdate):
     }
 
 
+class AddedItem(BaseModel):
+    # STAGE 2 STEP 3 (Change 2): an ad-hoc item the tool did not detect.
+    # Cost-only -- never affects value lift (see custom_plan.py docstring).
+    label: str
+    cost: float
+
+
 class CustomPlanRequest(BaseModel):
     item_ids: List[str] = []
     item_cost_overrides: Dict[str, float] = {}
+    added_items: List[AddedItem] = []
 
 
 @router.post("/{session_id}/custom-plan")
@@ -544,6 +552,7 @@ def custom_plan(session_id: str, body: CustomPlanRequest):
         item_cost_overrides=body.item_cost_overrides,
         commission_rate=commission_rate,
         has_hoa=has_hoa,
+        added_items=[i.dict() for i in body.added_items],
     )
 
     return {
