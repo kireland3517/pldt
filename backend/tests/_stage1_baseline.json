@@ -1,0 +1,606 @@
+{
+  "sample_override": {
+    "do_everything": {
+      "adjusted_sale_price": 314409.25,
+      "as_is_price": 305000.0,
+      "dom": {
+        "base_dom": 60.0,
+        "condition_multiplier": 0.7,
+        "estimated_dom": 34,
+        "listing_month": 6,
+        "seasonality_factor": 0.8
+      },
+      "improved_listing_ceiling": 335000.0,
+      "included_items": [
+        "WH-HTR-01",
+        "DET-01",
+        "DECK-01",
+        "ROOF-01",
+        "ELEC-01",
+        "FND-01"
+      ],
+      "item_count": 6,
+      "lender_gate": null,
+      "net_proceeds": {
+        "commission_rate": 0.06,
+        "dom_days": 34,
+        "gross_sale_price": 314409.25,
+        "has_hoa": false,
+        "line_items": [
+          {
+            "amount": 150000.0,
+            "calculated_amount": 0.0,
+            "key": "mortgage_payoff",
+            "label": "Mortgage payoff",
+            "note": "",
+            "override_amount": 150000.0
+          },
+          {
+            "amount": 18864.56,
+            "calculated_amount": 18864.56,
+            "key": "commission",
+            "label": "Agent commission",
+            "note": "6.0% \u2014 adjustable",
+            "override_amount": null
+          },
+          {
+            "amount": 1163.65,
+            "calculated_amount": 1163.65,
+            "key": "transfer_tax",
+            "label": "SC transfer tax",
+            "note": "SC deed recording fee/transfer tax ~ $1.85 per $500 (state $1.30 + county $0.55). VERIFY current rate.",
+            "override_amount": null
+          },
+          {
+            "amount": 675.0,
+            "calculated_amount": 675.0,
+            "key": "attorney_fee",
+            "label": "Attorney closing fee",
+            "note": "SC requires attorney-supervised closing (Matrix rulings). Seller's side.",
+            "override_amount": null
+          },
+          {
+            "amount": 15.0,
+            "calculated_amount": 15.0,
+            "key": "deed_fee",
+            "label": "Deed recording fee",
+            "note": "County Register of Deeds; confirm per-page.",
+            "override_amount": null
+          },
+          {
+            "amount": 112.5,
+            "calculated_amount": 112.5,
+            "key": "cl100",
+            "label": "CL-100 termite letter",
+            "note": "Wood-infestation report. Common in SC, esp. FHA/VA. Crawlspace moisture raises risk.",
+            "override_amount": null
+          },
+          {
+            "amount": 10825.0,
+            "calculated_amount": 10825.0,
+            "key": "repair_cost",
+            "label": "Pre-listing repairs (plan)",
+            "note": "Mid-point of library cost range",
+            "override_amount": null
+          },
+          {
+            "amount": 1572.12,
+            "calculated_amount": 1572.12,
+            "key": "carrying_cost",
+            "label": "Estimated carrying cost",
+            "note": "Interest + tax + insurance + utilities during DOM",
+            "override_amount": null
+          }
+        ],
+        "net_proceeds": 131181.43,
+        "plan_level": "do_everything",
+        "repair_spend": 10825.0,
+        "total_deductions": 183227.82
+      },
+      "plan_roi_pct": -13.1,
+      "total_repair_cost_mid": 10825.0,
+      "value_lift_cap_binding": false,
+      "value_lift_capped": 9409.25
+    },
+    "leaner": {
+      "adjusted_sale_price": 307125.0,
+      "as_is_price": 305000.0,
+      "dom": {
+        "base_dom": 60.0,
+        "condition_multiplier": 1.4,
+        "estimated_dom": 67,
+        "listing_month": 6,
+        "seasonality_factor": 0.8
+      },
+      "improved_listing_ceiling": 335000.0,
+      "included_items": [
+        "WH-HTR-01",
+        "DET-01"
+      ],
+      "item_count": 2,
+      "lender_gate": null,
+      "net_proceeds": {
+        "commission_rate": 0.06,
+        "dom_days": 67,
+        "gross_sale_price": 307125.0,
+        "has_hoa": false,
+        "line_items": [
+          {
+            "amount": 150000.0,
+            "calculated_amount": 0.0,
+            "key": "mortgage_payoff",
+            "label": "Mortgage payoff",
+            "note": "",
+            "override_amount": 150000.0
+          },
+          {
+            "amount": 18427.5,
+            "calculated_amount": 18427.5,
+            "key": "commission",
+            "label": "Agent commission",
+            "note": "6.0% \u2014 adjustable",
+            "override_amount": null
+          },
+          {
+            "amount": 1137.75,
+            "calculated_amount": 1137.75,
+            "key": "transfer_tax",
+            "label": "SC transfer tax",
+            "note": "SC deed recording fee/transfer tax ~ $1.85 per $500 (state $1.30 + county $0.55). VERIFY current rate.",
+            "override_amount": null
+          },
+          {
+            "amount": 675.0,
+            "calculated_amount": 675.0,
+            "key": "attorney_fee",
+            "label": "Attorney closing fee",
+            "note": "SC requires attorney-supervised closing (Matrix rulings). Seller's side.",
+            "override_amount": null
+          },
+          {
+            "amount": 15.0,
+            "calculated_amount": 15.0,
+            "key": "deed_fee",
+            "label": "Deed recording fee",
+            "note": "County Register of Deeds; confirm per-page.",
+            "override_amount": null
+          },
+          {
+            "amount": 112.5,
+            "calculated_amount": 112.5,
+            "key": "cl100",
+            "label": "CL-100 termite letter",
+            "note": "Wood-infestation report. Common in SC, esp. FHA/VA. Crawlspace moisture raises risk.",
+            "override_amount": null
+          },
+          {
+            "amount": 9999.0,
+            "calculated_amount": 2125.0,
+            "key": "repair_cost",
+            "label": "Pre-listing repairs (plan)",
+            "note": "Mid-point of library cost range",
+            "override_amount": 9999.0
+          },
+          {
+            "amount": 3098.01,
+            "calculated_amount": 3098.01,
+            "key": "carrying_cost",
+            "label": "Estimated carrying cost",
+            "note": "Interest + tax + insurance + utilities during DOM",
+            "override_amount": null
+          }
+        ],
+        "net_proceeds": 123660.24,
+        "plan_level": "leaner",
+        "repair_spend": 2125.0,
+        "total_deductions": 183464.76
+      },
+      "plan_roi_pct": 0.0,
+      "total_repair_cost_mid": 2125.0,
+      "value_lift_cap_binding": false,
+      "value_lift_capped": 2125.0
+    },
+    "recommended": {
+      "adjusted_sale_price": 313185.0,
+      "as_is_price": 305000.0,
+      "dom": {
+        "base_dom": 60.0,
+        "condition_multiplier": 1.0,
+        "estimated_dom": 48,
+        "listing_month": 6,
+        "seasonality_factor": 0.8
+      },
+      "improved_listing_ceiling": 335000.0,
+      "included_items": [
+        "WH-HTR-01",
+        "DET-01",
+        "DECK-01",
+        "FND-01"
+      ],
+      "item_count": 4,
+      "lender_gate": null,
+      "net_proceeds": {
+        "commission_rate": 0.06,
+        "dom_days": 48,
+        "gross_sale_price": 313185.0,
+        "has_hoa": false,
+        "line_items": [
+          {
+            "amount": 150000.0,
+            "calculated_amount": 0.0,
+            "key": "mortgage_payoff",
+            "label": "Mortgage payoff",
+            "note": "",
+            "override_amount": 150000.0
+          },
+          {
+            "amount": 18791.1,
+            "calculated_amount": 18791.1,
+            "key": "commission",
+            "label": "Agent commission",
+            "note": "6.0% \u2014 adjustable",
+            "override_amount": null
+          },
+          {
+            "amount": 1159.95,
+            "calculated_amount": 1159.95,
+            "key": "transfer_tax",
+            "label": "SC transfer tax",
+            "note": "SC deed recording fee/transfer tax ~ $1.85 per $500 (state $1.30 + county $0.55). VERIFY current rate.",
+            "override_amount": null
+          },
+          {
+            "amount": 675.0,
+            "calculated_amount": 675.0,
+            "key": "attorney_fee",
+            "label": "Attorney closing fee",
+            "note": "SC requires attorney-supervised closing (Matrix rulings). Seller's side.",
+            "override_amount": null
+          },
+          {
+            "amount": 15.0,
+            "calculated_amount": 15.0,
+            "key": "deed_fee",
+            "label": "Deed recording fee",
+            "note": "County Register of Deeds; confirm per-page.",
+            "override_amount": null
+          },
+          {
+            "amount": 112.5,
+            "calculated_amount": 112.5,
+            "key": "cl100",
+            "label": "CL-100 termite letter",
+            "note": "Wood-infestation report. Common in SC, esp. FHA/VA. Crawlspace moisture raises risk.",
+            "override_amount": null
+          },
+          {
+            "amount": 8625.0,
+            "calculated_amount": 8625.0,
+            "key": "repair_cost",
+            "label": "Pre-listing repairs (plan)",
+            "note": "Mid-point of library cost range",
+            "override_amount": null
+          },
+          {
+            "amount": 2219.47,
+            "calculated_amount": 2219.47,
+            "key": "carrying_cost",
+            "label": "Estimated carrying cost",
+            "note": "Interest + tax + insurance + utilities during DOM",
+            "override_amount": null
+          }
+        ],
+        "net_proceeds": 131586.98,
+        "plan_level": "recommended",
+        "repair_spend": 8625.0,
+        "total_deductions": 181598.02
+      },
+      "plan_roi_pct": -5.1,
+      "total_repair_cost_mid": 8625.0,
+      "value_lift_cap_binding": false,
+      "value_lift_capped": 8185.0
+    }
+  },
+  "zero_overrides": {
+    "do_everything": {
+      "adjusted_sale_price": 314409.25,
+      "as_is_price": 305000.0,
+      "dom": {
+        "base_dom": 60.0,
+        "condition_multiplier": 0.7,
+        "estimated_dom": 34,
+        "listing_month": 6,
+        "seasonality_factor": 0.8
+      },
+      "improved_listing_ceiling": 335000.0,
+      "included_items": [
+        "WH-HTR-01",
+        "DET-01",
+        "DECK-01",
+        "ROOF-01",
+        "ELEC-01",
+        "FND-01"
+      ],
+      "item_count": 6,
+      "lender_gate": null,
+      "net_proceeds": {
+        "commission_rate": 0.06,
+        "dom_days": 34,
+        "gross_sale_price": 314409.25,
+        "has_hoa": false,
+        "line_items": [
+          {
+            "amount": 150000.0,
+            "calculated_amount": 0.0,
+            "key": "mortgage_payoff",
+            "label": "Mortgage payoff",
+            "note": "",
+            "override_amount": 150000.0
+          },
+          {
+            "amount": 18864.56,
+            "calculated_amount": 18864.56,
+            "key": "commission",
+            "label": "Agent commission",
+            "note": "6.0% \u2014 adjustable",
+            "override_amount": null
+          },
+          {
+            "amount": 1163.65,
+            "calculated_amount": 1163.65,
+            "key": "transfer_tax",
+            "label": "SC transfer tax",
+            "note": "SC deed recording fee/transfer tax ~ $1.85 per $500 (state $1.30 + county $0.55). VERIFY current rate.",
+            "override_amount": null
+          },
+          {
+            "amount": 675.0,
+            "calculated_amount": 675.0,
+            "key": "attorney_fee",
+            "label": "Attorney closing fee",
+            "note": "SC requires attorney-supervised closing (Matrix rulings). Seller's side.",
+            "override_amount": null
+          },
+          {
+            "amount": 15.0,
+            "calculated_amount": 15.0,
+            "key": "deed_fee",
+            "label": "Deed recording fee",
+            "note": "County Register of Deeds; confirm per-page.",
+            "override_amount": null
+          },
+          {
+            "amount": 112.5,
+            "calculated_amount": 112.5,
+            "key": "cl100",
+            "label": "CL-100 termite letter",
+            "note": "Wood-infestation report. Common in SC, esp. FHA/VA. Crawlspace moisture raises risk.",
+            "override_amount": null
+          },
+          {
+            "amount": 10825.0,
+            "calculated_amount": 10825.0,
+            "key": "repair_cost",
+            "label": "Pre-listing repairs (plan)",
+            "note": "Mid-point of library cost range",
+            "override_amount": null
+          },
+          {
+            "amount": 1572.12,
+            "calculated_amount": 1572.12,
+            "key": "carrying_cost",
+            "label": "Estimated carrying cost",
+            "note": "Interest + tax + insurance + utilities during DOM",
+            "override_amount": null
+          }
+        ],
+        "net_proceeds": 131181.43,
+        "plan_level": "do_everything",
+        "repair_spend": 10825.0,
+        "total_deductions": 183227.82
+      },
+      "plan_roi_pct": -13.1,
+      "total_repair_cost_mid": 10825.0,
+      "value_lift_cap_binding": false,
+      "value_lift_capped": 9409.25
+    },
+    "leaner": {
+      "adjusted_sale_price": 307125.0,
+      "as_is_price": 305000.0,
+      "dom": {
+        "base_dom": 60.0,
+        "condition_multiplier": 1.4,
+        "estimated_dom": 67,
+        "listing_month": 6,
+        "seasonality_factor": 0.8
+      },
+      "improved_listing_ceiling": 335000.0,
+      "included_items": [
+        "WH-HTR-01",
+        "DET-01"
+      ],
+      "item_count": 2,
+      "lender_gate": null,
+      "net_proceeds": {
+        "commission_rate": 0.06,
+        "dom_days": 67,
+        "gross_sale_price": 307125.0,
+        "has_hoa": false,
+        "line_items": [
+          {
+            "amount": 150000.0,
+            "calculated_amount": 0.0,
+            "key": "mortgage_payoff",
+            "label": "Mortgage payoff",
+            "note": "",
+            "override_amount": 150000.0
+          },
+          {
+            "amount": 18427.5,
+            "calculated_amount": 18427.5,
+            "key": "commission",
+            "label": "Agent commission",
+            "note": "6.0% \u2014 adjustable",
+            "override_amount": null
+          },
+          {
+            "amount": 1137.75,
+            "calculated_amount": 1137.75,
+            "key": "transfer_tax",
+            "label": "SC transfer tax",
+            "note": "SC deed recording fee/transfer tax ~ $1.85 per $500 (state $1.30 + county $0.55). VERIFY current rate.",
+            "override_amount": null
+          },
+          {
+            "amount": 675.0,
+            "calculated_amount": 675.0,
+            "key": "attorney_fee",
+            "label": "Attorney closing fee",
+            "note": "SC requires attorney-supervised closing (Matrix rulings). Seller's side.",
+            "override_amount": null
+          },
+          {
+            "amount": 15.0,
+            "calculated_amount": 15.0,
+            "key": "deed_fee",
+            "label": "Deed recording fee",
+            "note": "County Register of Deeds; confirm per-page.",
+            "override_amount": null
+          },
+          {
+            "amount": 112.5,
+            "calculated_amount": 112.5,
+            "key": "cl100",
+            "label": "CL-100 termite letter",
+            "note": "Wood-infestation report. Common in SC, esp. FHA/VA. Crawlspace moisture raises risk.",
+            "override_amount": null
+          },
+          {
+            "amount": 2125.0,
+            "calculated_amount": 2125.0,
+            "key": "repair_cost",
+            "label": "Pre-listing repairs (plan)",
+            "note": "Mid-point of library cost range",
+            "override_amount": null
+          },
+          {
+            "amount": 3098.01,
+            "calculated_amount": 3098.01,
+            "key": "carrying_cost",
+            "label": "Estimated carrying cost",
+            "note": "Interest + tax + insurance + utilities during DOM",
+            "override_amount": null
+          }
+        ],
+        "net_proceeds": 131534.24,
+        "plan_level": "leaner",
+        "repair_spend": 2125.0,
+        "total_deductions": 175590.76
+      },
+      "plan_roi_pct": 0.0,
+      "total_repair_cost_mid": 2125.0,
+      "value_lift_cap_binding": false,
+      "value_lift_capped": 2125.0
+    },
+    "recommended": {
+      "adjusted_sale_price": 313185.0,
+      "as_is_price": 305000.0,
+      "dom": {
+        "base_dom": 60.0,
+        "condition_multiplier": 1.0,
+        "estimated_dom": 48,
+        "listing_month": 6,
+        "seasonality_factor": 0.8
+      },
+      "improved_listing_ceiling": 335000.0,
+      "included_items": [
+        "WH-HTR-01",
+        "DET-01",
+        "DECK-01",
+        "FND-01"
+      ],
+      "item_count": 4,
+      "lender_gate": null,
+      "net_proceeds": {
+        "commission_rate": 0.06,
+        "dom_days": 48,
+        "gross_sale_price": 313185.0,
+        "has_hoa": false,
+        "line_items": [
+          {
+            "amount": 150000.0,
+            "calculated_amount": 0.0,
+            "key": "mortgage_payoff",
+            "label": "Mortgage payoff",
+            "note": "",
+            "override_amount": 150000.0
+          },
+          {
+            "amount": 18791.1,
+            "calculated_amount": 18791.1,
+            "key": "commission",
+            "label": "Agent commission",
+            "note": "6.0% \u2014 adjustable",
+            "override_amount": null
+          },
+          {
+            "amount": 1159.95,
+            "calculated_amount": 1159.95,
+            "key": "transfer_tax",
+            "label": "SC transfer tax",
+            "note": "SC deed recording fee/transfer tax ~ $1.85 per $500 (state $1.30 + county $0.55). VERIFY current rate.",
+            "override_amount": null
+          },
+          {
+            "amount": 675.0,
+            "calculated_amount": 675.0,
+            "key": "attorney_fee",
+            "label": "Attorney closing fee",
+            "note": "SC requires attorney-supervised closing (Matrix rulings). Seller's side.",
+            "override_amount": null
+          },
+          {
+            "amount": 15.0,
+            "calculated_amount": 15.0,
+            "key": "deed_fee",
+            "label": "Deed recording fee",
+            "note": "County Register of Deeds; confirm per-page.",
+            "override_amount": null
+          },
+          {
+            "amount": 112.5,
+            "calculated_amount": 112.5,
+            "key": "cl100",
+            "label": "CL-100 termite letter",
+            "note": "Wood-infestation report. Common in SC, esp. FHA/VA. Crawlspace moisture raises risk.",
+            "override_amount": null
+          },
+          {
+            "amount": 8625.0,
+            "calculated_amount": 8625.0,
+            "key": "repair_cost",
+            "label": "Pre-listing repairs (plan)",
+            "note": "Mid-point of library cost range",
+            "override_amount": null
+          },
+          {
+            "amount": 2219.47,
+            "calculated_amount": 2219.47,
+            "key": "carrying_cost",
+            "label": "Estimated carrying cost",
+            "note": "Interest + tax + insurance + utilities during DOM",
+            "override_amount": null
+          }
+        ],
+        "net_proceeds": 131586.98,
+        "plan_level": "recommended",
+        "repair_spend": 8625.0,
+        "total_deductions": 181598.02
+      },
+      "plan_roi_pct": -5.1,
+      "total_repair_cost_mid": 8625.0,
+      "value_lift_cap_binding": false,
+      "value_lift_capped": 8185.0
+    }
+  }
+}

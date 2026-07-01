@@ -166,29 +166,63 @@ TIER_MULTIPLIERS = {"major": 1.5, "moderate": 1.15, "minor": 1.0}
 INVESTOR_CAP_RATE = 0.75   # 75% of retail ARV for investor/cash-only scenario
 
 
-def _adjusted_sale_price(
+def _value_lift_scope_ids(enriched_rows: list, level: str) -> set:
+    """
+    STAGE 1 (additive): the item-inclusion decision _adjusted_sale_price has
+    always made inline, extracted as its own pure function so a future
+    custom item set can supply an equivalent set directly instead of a
+    level string. This is a literal transcription of the include-decision
+    that lived inline below -- same rows, same conditions, same order.
+
+    NOT the same scope as _items_for_level (display list) or
+    _repair_cost_scope_ids (net_proceeds.py) -- those two disagree with this
+    one on credit items and on upgrade/recoup gating by design (see
+    test_v1v2v3.py::test_kit01_cost_in_recommended_repair_line, which locks
+    in that upgrade cost is deducted regardless of recoup, while this scope
+    and the display list both gate upgrade inclusion on recoup>=75). Stage 1
+    does not reconcile these three scopes; it only names each one.
+    """
+    ids = set()
+    for row in enriched_rows:
+        bv = row.get("better_value")
+        if bv not in ("repair", "replace", "upgrade"):
+            continue
+
+        is_floor = row.get("defect_qualifies_floor", False)
+
+        include = False
+        if level == "leaner" and is_floor:
+            include = True
+        elif level == "recommended":
+            if is_floor or row.get("recoup_pct", 0) >= RECOMMENDED_RECOUP_THRESHOLD:
+                include = True
+            if bv == "upgrade" and row.get("recoup_pct", 0) >= RECOMMENDED_RECOUP_THRESHOLD:
+                include = True
+        elif level == "do_everything":
+            include = True
+
+        if include:
+            ids.add(row["component_id"])
+
+    return ids
+
+
+def _adjusted_sale_price_for_items(
     base_mid: float,
     ceiling: float,
     enriched_rows: list,
-    level: str,
+    included_item_ids: set,
 ) -> tuple:
     """
-    Estimate value uplift for a given plan level, capped at comp ceiling.
+    STAGE 1 (additive): the tier-multiplier / recoup uplift math from
+    _adjusted_sale_price, unchanged, now driven by an explicit item-id set
+    instead of a level string. _adjusted_sale_price (below) is now a thin
+    wrapper that derives the set via _value_lift_scope_ids and calls this.
 
-    Floor/defect-clearing items (A5 haircut model):
-      Recovery = library_cost_mid × tier_multiplier
-      Tier multipliers: major 1.5×, moderate 1.15×, minor 1.0×
-      Library cost is the anchor — a higher contractor quote cannot inflate recovery.
-      Tiers assigned per component in components_library.csv severity_tier field.
-
-    Upgrade (discretionary) items:
-      uplift = library_cost_mid × recoup_pct   (unchanged from original model)
-
-    Investor-cap lender gate (major+lender items only):
-      When a major lender-eligible item IS in the plan, we record the retail price.
-      If it were unrepaired, the investor price would be ≈75% of retail.
-      Returned in lender_gate_items for the frontend to surface as a two-path choice.
-      Minor/moderate lender items do NOT trigger the investor cap.
+    Nothing calls this function with anything other than
+    _value_lift_scope_ids' output yet -- build_plans() still goes through
+    the level-based _adjusted_sale_price wrapper unchanged. A future custom
+    plan would call this directly with a checkbox-derived set.
 
     Returns (adjusted_price, uncapped_uplift, cap_was_binding, lender_gate_items).
     """
@@ -215,16 +249,7 @@ def _adjusted_sale_price(
         if not mid:
             continue
 
-        include = False
-        if level == "leaner" and is_floor:
-            include = True
-        elif level == "recommended":
-            if is_floor or row.get("recoup_pct", 0) >= RECOMMENDED_RECOUP_THRESHOLD:
-                include = True
-            if bv == "upgrade" and row.get("recoup_pct", 0) >= RECOMMENDED_RECOUP_THRESHOLD:
-                include = True
-        elif level == "do_everything":
-            include = True
+        include = row["component_id"] in included_item_ids
 
         if include:
             if is_floor:
@@ -258,6 +283,24 @@ def _adjusted_sale_price(
     cap_was_binding = raw_price > ceiling
 
     return adjusted_price, uplift, cap_was_binding, lender_gate_items
+
+
+def _adjusted_sale_price(
+    base_mid: float,
+    ceiling: float,
+    enriched_rows: list,
+    level: str,
+) -> tuple:
+    """
+    UNCHANGED SIGNATURE AND BEHAVIOR (Stage 1 -- do not break test_haircut.py /
+    test_v1v2v3.py, which call this directly with a level string). Body is
+    now a thin wrapper: derive the value-lift scope from the level, then run
+    the same math as before through _adjusted_sale_price_for_items.
+
+    Returns (adjusted_price, uncapped_uplift, cap_was_binding, lender_gate_items).
+    """
+    included_item_ids = _value_lift_scope_ids(enriched_rows, level)
+    return _adjusted_sale_price_for_items(base_mid, ceiling, enriched_rows, included_item_ids)
 
 
 def _items_for_level(enriched_rows: list, floor_result: dict, level: str) -> list:

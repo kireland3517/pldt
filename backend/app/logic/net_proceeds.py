@@ -247,6 +247,94 @@ def compute_net_proceeds(
     }
 
 
+def _repair_cost_scope_ids(enriched_rows: list, plan_level: str) -> set:
+    """
+    STAGE 1 (additive): the item-inclusion decision net_for_plan has always
+    made inline for its repair-cost/concessions sum, extracted as its own
+    pure function. Literal transcription of the include-decision that lived
+    inline below -- same rows, same conditions, same order.
+
+    NOT the same scope as _items_for_level or _value_lift_scope_ids in
+    optimizer.py -- this one includes credit items and does NOT gate upgrade
+    inclusion on recoup_pct (locked by
+    test_v1v2v3.py::test_kit01_cost_in_recommended_repair_line: an upgrade
+    item's cost is deducted regardless of recoup). Stage 1 does not
+    reconcile these three scopes; it only names each one.
+
+    For "leaner": empty set -- leaner's repair cost is floor_result["cost_mid"]
+    alone, nothing summed on top.
+    For "recommended": non-floor rows meeting the existing rules.
+    For "do_everything": ALL applicable rows, floor rows included. This level
+    has never used floor_result["cost_mid"] as a base -- it sums every row's
+    own cost_mid_repair/cost_mid_replace field directly, so it does NOT get
+    floor.py's shared-structure dedup (see floor.py's owner/dependent cost
+    rule). That is existing, pre-Stage-1 behavior, not something this
+    refactor changes or fixes.
+    """
+    ids = set()
+    if plan_level == "leaner":
+        return ids
+    elif plan_level == "recommended":
+        for row in enriched_rows:
+            if row.get("defect_qualifies_floor"):
+                continue  # already in floor cost
+            bv = row.get("better_value")
+            if bv in ("repair", "replace") and row.get("recoup_pct", 0) >= 75:
+                ids.add(row["component_id"])
+            elif bv == "upgrade":
+                ids.add(row["component_id"])
+            elif bv == "credit":
+                ids.add(row["component_id"])
+        return ids
+    else:  # do_everything
+        for row in enriched_rows:
+            bv = row.get("better_value")
+            if bv in ("repair", "replace", "upgrade", "credit"):
+                ids.add(row["component_id"])
+        return ids
+
+
+def _repair_cost_and_concessions(
+    enriched_rows: list,
+    floor_result: dict,
+    plan_level: str,
+    item_ids: set,
+) -> tuple:
+    """
+    STAGE 1 (additive): the repair-cost/concessions dollar math from
+    net_for_plan, unchanged, now driven by an explicit item-id set (plus
+    plan_level, kept ONLY to decide whether floor_result["cost_mid"] is the
+    base -- see _repair_cost_scope_ids docstring on why do_everything can't
+    share that base with the other two levels without changing its output).
+
+    Returns (repair_cost_mid, concessions_total).
+    """
+    concessions_total = 0.0
+    repair_cost_mid = 0.0 if plan_level == "do_everything" else floor_result["cost_mid"]
+
+    for row in enriched_rows:
+        cid = row["component_id"]
+        if plan_level != "do_everything" and row.get("defect_qualifies_floor"):
+            continue  # already counted in floor_result["cost_mid"]
+        if cid not in item_ids:
+            continue
+        bv = row.get("better_value")
+        if bv in ("repair", "replace"):
+            mid = (
+                row.get("cost_mid_repair") if bv == "repair"
+                else row.get("cost_mid_replace")
+            ) or 0
+            repair_cost_mid += mid
+        elif bv == "upgrade":
+            mid = row.get("cost_mid_repair") or 0
+            repair_cost_mid += mid
+        elif bv == "credit":
+            mid = row.get("cost_mid_repair") or row.get("cost_mid_replace") or 0
+            concessions_total += mid / 2  # credit is typically ~50% of repair
+
+    return repair_cost_mid, concessions_total
+
+
 def net_for_plan(
     valuation: dict,
     plan_level: str,            # "leaner" | "recommended" | "do_everything"
@@ -269,6 +357,11 @@ def net_for_plan(
       "recommended"   → Floor + high-recoup items better_value in (repair, replace)
       "do_everything" → all items with better_value != "leave"
 
+    UNCHANGED SIGNATURE AND BEHAVIOR (Stage 1 -- do not break test_v1v2v3.py /
+    test_v4v5v6v7.py, which call this directly with plan_level=<string>).
+    Body now derives the repair-cost scope via _repair_cost_scope_ids and
+    runs the same math as before through _repair_cost_and_concessions.
+
     overrides: this plan's per-plan line overrides (see compute_net_proceeds).
     """
     # Sale price: always the as-is mid (seller hasn't done work yet; value
@@ -277,53 +370,10 @@ def net_for_plan(
     # the conservative baseline so net_proceeds is clear about what's baked in).
     sale_price = valuation["mid"]
 
-    repair_cost_mid = 0.0
-    concessions_total = 0.0
-
-    if plan_level == "leaner":
-        repair_cost_mid = floor_result["cost_mid"]
-
-    elif plan_level == "recommended":
-        # Floor cost + items with better_value=repair/replace and recoup>=75%
-        repair_cost_mid = floor_result["cost_mid"]
-        for row in enriched_rows:
-            if row.get("defect_qualifies_floor"):
-                continue  # already in floor cost
-            bv = row.get("better_value")
-            if bv in ("repair", "replace"):
-                rp = row.get("recoup_pct", 0)
-                if rp >= 75:
-                    mid = (
-                        row.get("cost_mid_repair") if bv == "repair"
-                        else row.get("cost_mid_replace")
-                    )
-                    if mid:
-                        repair_cost_mid += mid
-            elif bv == "upgrade":
-                # Upgrade items generate value lift; their cost must also be deducted.
-                # A2: any item contributing uplift must count its seller-paid cost.
-                mid = row.get("cost_mid_repair") or 0
-                if mid:
-                    repair_cost_mid += mid
-            elif bv == "credit":
-                mid = row.get("cost_mid_repair") or row.get("cost_mid_replace") or 0
-                concessions_total += mid / 2  # credit is typically ~50% of repair
-
-    else:  # do_everything
-        for row in enriched_rows:
-            bv = row.get("better_value")
-            if bv in ("repair", "replace"):
-                mid = (
-                    row.get("cost_mid_repair") if bv == "repair"
-                    else row.get("cost_mid_replace")
-                ) or 0
-                repair_cost_mid += mid
-            elif bv == "upgrade":
-                mid = row.get("cost_mid_repair") or 0
-                repair_cost_mid += mid
-            elif bv == "credit":
-                mid = row.get("cost_mid_repair") or row.get("cost_mid_replace") or 0
-                concessions_total += mid / 2
+    item_ids = _repair_cost_scope_ids(enriched_rows, plan_level)
+    repair_cost_mid, concessions_total = _repair_cost_and_concessions(
+        enriched_rows, floor_result, plan_level, item_ids
+    )
 
     result = compute_net_proceeds(
         sale_price=sale_price,
