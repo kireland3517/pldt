@@ -2,6 +2,27 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { getCompute, updateInputs, updateOverride, downloadPdf, downloadLargePdf, refetchMarketData, getCustomPlan } from '../api'
 
 
+// ── Design tokens (cosmetic pass, chunk 1 -- 2026-07-01) ──────────────────────────────────
+const tokens = {
+  surface1: '#F4F5F7',
+  surface2: '#FFFFFF',
+  border: '#E1E4E9',
+  borderStrong: '#C9CDD5',
+  textPrimary: '#1A1D23',
+  textSecondary: '#5B6270',
+  textMuted: '#8B909C',
+  textSuccess: '#0E7A5F',
+  pageBg: '#EAECEF',
+  requiredLabel: '#993C1D',
+  radiusLg: '12px',
+  radiusMd: '10px',
+  radiusSm: '6px',
+  spaceXs: '4px',
+  spaceSm: '8px',
+  spaceMd: '16px',
+  spaceLg: '20px',
+}
+
 // ── Tooltip copy ─────────────────────────────────────────────────────────────
 // Exact copy approved by product — do not paraphrase.
 const TIPS = {
@@ -980,17 +1001,17 @@ export default function ResultsStep({ sessionId }) {
       )}
 
       {/* ── 1. Plans (tabbed) ── */}
-      <section style={{ ...sectionStyle, borderRadius: 12, border: '0.5px solid #e5e7eb' }}>
+      <section style={{ ...sectionStyle, borderRadius: tokens.radiusLg, border: `0.5px solid ${tokens.border}` }}>
         <h3 style={h3}>Plans</h3>
         <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
           {[...planKeys, 'custom'].map(key => (
             <button key={key}
               onClick={() => setSelectedPlan(key)}
               style={{
-                padding: '6px 18px', borderRadius: 20,
-                border: selectedPlan === key ? '1px solid #111827' : '1px solid #d1d5db',
-                background: selectedPlan === key ? '#111827' : '#f9fafb',
-                color: selectedPlan === key ? '#fff' : '#374151',
+                padding: '6px 18px', borderRadius: tokens.radiusSm,
+                border: selectedPlan === key ? `1px solid ${tokens.textPrimary}` : `1px solid ${tokens.border}`,
+                background: selectedPlan === key ? tokens.textPrimary : tokens.surface2,
+                color: selectedPlan === key ? tokens.surface2 : tokens.textSecondary,
                 fontWeight: selectedPlan === key ? 500 : 400,
                 fontSize: 13, cursor: 'pointer',
               }}>
@@ -1311,43 +1332,46 @@ export default function ResultsStep({ sessionId }) {
           const isNeg = (net.net_proceeds ?? 0) < 0
           return (
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between',
-                            alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 8 }}>
-                <div>
-                  <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 3 }}>
-                    {PLAN_LABELS[selectedPlan]}
+              <div style={{ background: tokens.surface1, padding: tokens.spaceMd,
+                            marginBottom: tokens.spaceMd, borderBottom: `1px solid ${tokens.borderStrong}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between',
+                              alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 8 }}>
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 3, color: tokens.textPrimary }}>
+                      {PLAN_LABELS[selectedPlan]}
+                    </div>
+                    <div style={{ fontSize: 12, color: tokens.textSecondary }}>
+                      {PLAN_DESCRIPTIONS[selectedPlan]}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 12, color: '#6b7280' }}>
-                    {PLAN_DESCRIPTIONS[selectedPlan]}
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 11, color: tokens.textMuted, marginBottom: 2 }}>
+                      Suggested listing price (estimate)
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 500, marginBottom: 2, color: tokens.textPrimary }}>
+                      {fmt(p.adjusted_sale_price)}
+                    </div>
+                    {p.value_lift_capped > 0 && (
+                      <div style={{ fontSize: 11, color: tokens.textSuccess }}>
+                        +{fmt(p.value_lift_capped)} est. value lift
+                        {p.value_lift_cap_binding && (
+                          <span style={{ marginLeft: 4, color: '#b45309' }}>
+                            ⚑ capped<Tip id="valueLiftCapped" />
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 2 }}>
-                    Suggested listing price (estimate)
-                  </div>
-                  <div style={{ fontSize: 18, fontWeight: 500, marginBottom: 2 }}>
-                    {fmt(p.adjusted_sale_price)}
-                  </div>
-                  {p.value_lift_capped > 0 && (
-                    <div style={{ fontSize: 11, color: '#1a7f37' }}>
-                      +{fmt(p.value_lift_capped)} est. value lift
-                      {p.value_lift_cap_binding && (
-                        <span style={{ marginLeft: 4, color: '#b45309' }}>
-                          ⚑ capped<Tip id="valueLiftCapped" />
-                        </span>
-                      )}
-                    </div>
+                <div style={{ fontSize: 12, color: tokens.textSecondary, marginBottom: 0 }}>
+                  {p.dom?.estimated_dom} days est.
+                  {' · '}{panelReq.length} required + {panelOpt.length} optional items
+                  {p.plan_roi_pct != null && (
+                    <span style={{ marginLeft: 10, color: p.plan_roi_pct >= 0 ? tokens.textSuccess : '#c00' }}>
+                      ROI: {p.plan_roi_pct > 0 ? '+' : ''}{p.plan_roi_pct}%<Tip id="planROI" />
+                    </span>
                   )}
                 </div>
-              </div>
-              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
-                {p.dom?.estimated_dom} days est.
-                {' · '}{panelReq.length} required + {panelOpt.length} optional items
-                {p.plan_roi_pct != null && (
-                  <span style={{ marginLeft: 10, color: p.plan_roi_pct >= 0 ? '#1a7f37' : '#c00' }}>
-                    ROI: {p.plan_roi_pct > 0 ? '+' : ''}{p.plan_roi_pct}%<Tip id="planROI" />
-                  </span>
-                )}
               </div>
               <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
                 {/* Left: repair list */}
