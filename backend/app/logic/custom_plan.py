@@ -104,6 +104,14 @@ def build_custom_plan(
         enriched_rows, floor_result, effective_ids, item_cost_overrides,
     )
 
+    # Product decision (confirmed): Custom seeds from recommended.included_items
+    # by design. For properties with low-recoup credit items, Custom-on-open net
+    # can differ from the Recommended tab by those items' concessions, because
+    # the standard plans count credit-item concessions unconditionally
+    # (_repair_cost_scope_ids) while excluding them from included_items. Custom
+    # intentionally counts concessions only for checked items. Expected and
+    # correct -- do NOT "fix" by reseeding from the dollar scope.
+
     # Change 2: ad-hoc cost-only items. Additive, outside the enriched_rows
     # scope entirely -- structurally cannot touch value lift.
     added_items_cost_total = round(sum(float(i.get("cost") or 0) for i in added_items), 2)

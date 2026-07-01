@@ -128,6 +128,13 @@ def run():
           "upgrade" not in bvs_present and "credit" not in bvs_present,
           f"found: {bvs_present}")
 
+    # Cross-ref: item-3 decision (custom_plan.py) says Custom's concessions can
+    # legitimately diverge from Recommended's on properties with low-recoup
+    # credit items excluded from included_items. This fixture has none (checked
+    # above), so that divergence doesn't apply here and exact equality below is
+    # the correct assertion, not a coincidence -- if this fixture ever gains a
+    # credit/upgrade row, the check above fails loudly first.
+
     plans = build_plans(
         enriched_rows=enriched, floor_result=floor_result, valuation=valuation,
         dom_data=dom_data, closing_constants=closing_const, property_inputs=prop,

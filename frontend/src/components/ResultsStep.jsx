@@ -507,7 +507,7 @@ export default function ResultsStep({ sessionId }) {
   // standard-tab PDF download machinery and must not be touched here).
   const [customCheckedIds,    setCustomCheckedIds]    = useState(null)   // Set|null; null = not seeded yet
   const [customCostOverrides, setCustomCostOverrides] = useState({})    // {cid: number}
-  const [customAddedItems,    setCustomAddedItems]    = useState([])    // [{label, cost}]
+  const [customAddedItems,    setCustomAddedItems]    = useState([])    // [{label, cost, checked}]
   const [customPlan,          setCustomPlan]          = useState(null)  // last good /custom-plan response
   const [customLoading,       setCustomLoading]       = useState(false) // true only before first result
   const [customRecalculating, setCustomRecalculating] = useState(false)
@@ -594,7 +594,7 @@ export default function ResultsStep({ sessionId }) {
       const r = await getCustomPlan(sessionId, {
         itemIds:           [...customCheckedIds],
         itemCostOverrides: customCostOverrides,
-        addedItems:        customAddedItems,
+        addedItems:        customAddedItems.filter(it => it.checked),
       })
       if (seq !== customSeqRef.current) return   // a newer request already landed
       setCustomPlan(r.plan)
@@ -633,9 +633,19 @@ export default function ResultsStep({ sessionId }) {
   function addCustomItem() {
     const cost = parseFloat(newItemCost)
     if (!newItemLabel.trim() || isNaN(cost) || cost <= 0) return
-    setCustomAddedItems(prev => [...prev, { label: newItemLabel.trim(), cost }])
+    setCustomAddedItems(prev => [...prev, { label: newItemLabel.trim(), cost, checked: true }])
     setNewItemLabel('')
     setNewItemCost('')
+  }
+
+  function toggleAddedItemChecked(idx) {
+    setCustomAddedItems(prev => prev.map((it, i) => i === idx ? { ...it, checked: !it.checked } : it))
+  }
+
+  function updateAddedItemCost(idx, rawVal) {
+    const n = parseFloat(rawVal)
+    if (isNaN(n) || n <= 0) return
+    setCustomAddedItems(prev => prev.map((it, i) => i === idx ? { ...it, cost: n } : it))
   }
 
   function removeCustomAddedItem(idx) {
@@ -989,6 +999,10 @@ export default function ResultsStep({ sessionId }) {
           const optRows = repair.filter(
             item => !floorIds.has(item.component_id) && doEverythingIds.has(item.component_id)
           )
+          // Item 1: any required (floor) item unchecked on Custom? Frontend-only
+          // detection, independent of backend lender_gate -- fires even when the
+          // backend has no major/investor-cap item to report (e.g. Kingfisher).
+          const anyRequiredUnchecked = [...floorIds].some(id => !customCheckedIds?.has(id))
 
           if (customLoading || !p) {
             return <p style={{ fontSize: 13, color: '#6b7280', padding: '20px 0' }}>Loading custom plan…</p>
@@ -1116,26 +1130,65 @@ export default function ResultsStep({ sessionId }) {
                     </p>
                   )}
 
+                  {/* Added items -- user-entered items not detected by the tool.
+                      Full parity with Required/Optional: checkbox toggles whether the
+                      cost counts in the net (unchecked = kept in the list, not counted),
+                      cost is editable inline (same click-to-edit affordance as CostCell,
+                      keyed by `added:${i}` in the shared editingCost state), and the ✕
+                      control deletes the row entirely. */}
+                  {customAddedItems.length > 0 && (
+                    <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid #e5e7eb' }}>
+                      <div style={{ fontWeight: 500, fontSize: 12, color: '#374151', marginBottom: 6,
+                                    background: '#e5e7eb', padding: '4px 8px', borderRadius: 4 }}>
+                        Added items ({customAddedItems.length})
+                      </div>
+                      {customAddedItems.map((it, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                              fontSize: 12, padding: '4px 0',
+                                              borderBottom: '1px solid #f3f4f6',
+                                              opacity: it.checked ? 1 : 0.55 }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <input type="checkbox"
+                              checked={it.checked}
+                              onChange={() => toggleAddedItemChecked(i)} />
+                            {it.label}
+                          </span>
+                          <span style={{ whiteSpace: 'nowrap', marginLeft: 12, display: 'flex', alignItems: 'center' }}>
+                            {editingCost === `added:${i}` ? (
+                              <input
+                                type="number"
+                                defaultValue={it.cost}
+                                style={{ width: 90, fontSize: 12, padding: '2px 4px' }}
+                                autoFocus
+                                onBlur={e => { updateAddedItemCost(i, e.target.value); setEditingCost(null) }}
+                                onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+                              />
+                            ) : (
+                              <span
+                                onClick={() => setEditingCost(`added:${i}`)}
+                                title="Click to enter your own cost"
+                                style={{ cursor: 'pointer', textDecorationLine: 'underline',
+                                         textDecorationStyle: 'dotted', fontSize: 12 }}
+                              >
+                                {fmt(it.cost)}
+                              </span>
+                            )}
+                            <button onClick={() => removeCustomAddedItem(i)}
+                              style={{ marginLeft: 8, border: 'none', background: 'none',
+                                       color: '#c00', cursor: 'pointer', fontSize: 12 }}>
+                              ✕
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Add-your-own item -- cost-only, never affects value lift */}
                   <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid #e5e7eb' }}>
                     <div style={{ fontWeight: 500, fontSize: 12, color: '#374151', marginBottom: 6 }}>
                       Add an item the tool didn't detect
                     </div>
-                    {customAddedItems.map((it, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
-                                            fontSize: 12, padding: '4px 0',
-                                            borderBottom: '1px solid #f3f4f6' }}>
-                        <span>{it.label}</span>
-                        <span>
-                          {fmt(it.cost)}
-                          <button onClick={() => removeCustomAddedItem(i)}
-                            style={{ marginLeft: 8, border: 'none', background: 'none',
-                                     color: '#c00', cursor: 'pointer', fontSize: 12 }}>
-                            ✕
-                          </button>
-                        </span>
-                      </div>
-                    ))}
                     <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
                       <input placeholder="Description" value={newItemLabel}
                         onChange={e => setNewItemLabel(e.target.value)}
@@ -1202,6 +1255,18 @@ export default function ResultsStep({ sessionId }) {
                   </div>
                 </div>
               </div>
+
+              {/* Item 1: frontend-only caution -- fires whenever ANY required (floor)
+                  item is unchecked on Custom, regardless of backend lender_gate. Layered
+                  with (not replacing) the detailed box below, which only renders when the
+                  backend actually returns lender_gate.note (major/investor-cap items only). */}
+              {anyRequiredUnchecked && (
+                <div style={{ marginTop: 16, padding: 12, border: '1px solid #dc2626',
+                              background: '#fef2f2', borderRadius: 6, fontSize: 12, color: '#991b1b' }}>
+                  You've unchecked a required-to-sell item. Skipping required repairs can
+                  make your home harder — or impossible — to sell to a typical buyer.
+                </div>
+              )}
 
               {/* Custom's own lender-gate note -- backend already frames retail vs. investor pricing */}
               {p.lender_gate?.note && (
