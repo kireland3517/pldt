@@ -219,12 +219,13 @@ function CostCell({ item, customCosts, editingCost, setEditingCost, onCostSave }
   const hasCustom = customCosts[cid] != null
   const loField  = item.better_value === 'replace' ? item.replace_low  : item.repair_low
   const hiField  = item.better_value === 'replace' ? item.replace_high : item.repair_high
+  const mid      = itemCostMid(item)
 
   if (editingCost === cid) {
     return (
       <input
         type="number"
-        defaultValue={customCosts[cid] || itemCostMid(item) || ''}
+        defaultValue={customCosts[cid] || mid || ''}
         style={{ width: 90, fontSize: 12, padding: '2px 4px' }}
         autoFocus
         onBlur={e => { onCostSave(cid, e.target.value); setEditingCost(null) }}
@@ -236,12 +237,12 @@ function CostCell({ item, customCosts, editingCost, setEditingCost, onCostSave }
   return (
     <span
       onClick={() => setEditingCost(cid)}
-      title="Click to enter your own quote"
+      title="Click to enter your own cost"
       style={{ cursor: 'pointer', textDecorationLine: 'underline', textDecorationStyle: 'dotted', fontSize: 12 }}
     >
       {hasCustom
-        ? <><strong>{fmt(customCosts[cid])}</strong><span style={{ color: '#2563eb', fontSize: 11 }}> (your quote)</span></>
-        : fmtRange(loField, hiField)
+        ? <><strong>{fmt(customCosts[cid])}</strong><span style={{ color: '#2563eb', fontSize: 11 }}> (edited)</span></>
+        : (mid ? fmt(mid) : fmtRange(loField, hiField))
       }
     </span>
   )
@@ -280,6 +281,7 @@ function NetLineRow({
   payoffSecondary, setPayoffSecondary,
   payoffOther, setPayoffOther,
   saving, commitOverride, commitGlobal, grossPrice,
+  resetAllItemCosts,
 }) {
   const isEdited = li.override_amount != null && !GLOBAL_FACT_KEYS.has(li.key)
   const editable = PER_PLAN_KEYS.has(li.key) || li.key === 'commission' || li.key === 'mortgage_payoff'
@@ -313,6 +315,12 @@ function NetLineRow({
           mortgage_payoff: 0, payoff_primary: 0, payoff_secondary: 0, payoff_other: 0,
         },
       })
+    } else if (li.key === 'repair_cost') {
+      // Item costs are global across plans (see commitItemCost). Resetting
+      // repair_cost on any one tab must clear every item override and revert
+      // repair_cost on all three plans, or the "items sum to total" invariant
+      // breaks on the tabs you didn't click reset on.
+      resetAllItemCosts()
     } else {
       commitOverride(planLevel, li.key, null)
     }
@@ -400,8 +408,21 @@ function NetLineRow({
     )
   }
 
+  // ── repair_cost: display only. Edits happen bottom-up from item costs
+  // (see CostCell / commitItemCost); this line only shows the sum and, if
+  // any item is overridden, a reset that clears all item overrides.
+  if (li.key === 'repair_cost') {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'space-between',
+                    fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
+        {labelEl}
+        <span>({fmt(li.amount)}) {resetEl}</span>
+      </div>
+    )
+  }
+
   // ── Per-plan overridable lines: click to edit, commit on blur/Enter ──
-  if (PER_PLAN_KEYS.has(li.key)) {
+  if (PER_PLAN_KEYS.has(li.key) && li.key !== 'repair_cost') {
     if (editingLine === li.key) {
       return (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
@@ -572,16 +593,6 @@ export default function ResultsStep({ sessionId }) {
     })
   }
 
-  // Save a custom cost quote
-  function handleCostSave(cid, rawVal) {
-    const n = parseFloat(rawVal)
-    if (!isNaN(n) && n > 0) {
-      setCustomCosts(prev => ({ ...prev, [cid]: n }))
-    } else if (rawVal === '' || rawVal === '0') {
-      setCustomCosts(prev => { const next = { ...prev }; delete next[cid]; return next })
-    }
-  }
-
   const [pdfLoading, setPdfLoading] = React.useState(false)
   const [pdfError,   setPdfError]   = React.useState(null)
 
@@ -660,6 +671,96 @@ export default function ResultsStep({ sessionId }) {
   const isCustomized  = customItems !== null &&
     (customItems.size !== planNonFloor.size ||
      [...customItems].some(id => !planNonFloor.has(id)))
+
+  // ── Stage 2 Piece B: bottom-up item-cost editing ──────────────────────────
+  // Item costs are global: an edited cost applies everywhere the item shows
+  // up across leaner/recommended/do_everything. shownItemIds mirrors the
+  // floor+included-items membership used to build panelReq/panelOpt, but for
+  // an arbitrary plan key rather than just the selected one.
+  function shownItemIds(planKey) {
+    const p = plans[planKey] || {}
+    const ids = new Set((p.included_items || []).map(
+      x => typeof x === 'string' ? x : x.component_id
+    ))
+    return new Set([...floorIds, ...ids])
+  }
+
+  function computeRepairCostForPlan(planKey, costsMap) {
+    let sum = 0
+    for (const cid of shownItemIds(planKey)) {
+      const row = repair.find(r => r.component_id === cid)
+      if (!row) continue
+      sum += costsMap[cid] != null ? costsMap[cid] : itemCostMid(row)
+    }
+    return sum
+  }
+
+  // Edit one item's cost: update local display state, then PATCH repair_cost
+  // for every plan that shows this item. Sequential on purpose — these PATCH
+  // calls read-modify-write a single JSON column per session
+  // (line_overrides_json); firing them in parallel risks a lost update where
+  // one plan's write clobbers another's. Each plan is tried independently
+  // (try/catch per iteration) so one failure doesn't block the rest; if any
+  // plan fails, editError names exactly which tabs are now stale instead of
+  // failing silently.
+  async function commitItemCost(cid, rawVal) {
+    const n = parseFloat(rawVal)
+    const next = { ...customCosts }
+    if (!isNaN(n) && n > 0) {
+      next[cid] = n
+    } else {
+      delete next[cid]
+    }
+    setCustomCosts(next)
+
+    const affectedPlans = planKeys.filter(pk => shownItemIds(pk).has(cid))
+    setSaving(true)
+    setEditError(null)
+    const failed = []
+    for (const pk of affectedPlans) {
+      try {
+        const amount = computeRepairCostForPlan(pk, next)
+        const r = await updateOverride(sessionId, pk, 'repair_cost', amount)
+        setResult(r)
+      } catch (err) {
+        failed.push(PLAN_LABELS[pk] || pk)
+      }
+    }
+    if (failed.length > 0) {
+      setEditError(
+        `Cost update saved on some plans but failed on: ${failed.join(', ')}. ` +
+        `Item totals may not match on ${failed.length > 1 ? 'those tabs' : 'that tab'} until you retry.`
+      )
+    }
+    setSaving(false)
+  }
+
+  // Reset icon on the repair_cost line: clear every item override and revert
+  // repair_cost to the calculated value on all three plans. Only plans that
+  // currently carry a repair_cost override are PATCHed.
+  async function resetAllItemCosts() {
+    setCustomCosts({})
+    setSaving(true)
+    setEditError(null)
+    const failed = []
+    for (const pk of planKeys) {
+      const li = (plans[pk]?.net_proceeds?.line_items || []).find(x => x.key === 'repair_cost')
+      if (!li || li.override_amount == null) continue
+      try {
+        const r = await updateOverride(sessionId, pk, 'repair_cost', null)
+        setResult(r)
+      } catch (err) {
+        failed.push(PLAN_LABELS[pk] || pk)
+      }
+    }
+    if (failed.length > 0) {
+      setEditError(
+        `Reset saved on some plans but failed on: ${failed.join(', ')}. ` +
+        `Item totals may not match on ${failed.length > 1 ? 'those tabs' : 'that tab'} until you retry.`
+      )
+    }
+    setSaving(false)
+  }
 
   const baseNet  = selNet.net_proceeds ?? 0
   // V6B: base payoff from the stored result (before any live knob change)
@@ -852,12 +953,13 @@ export default function ResultsStep({ sessionId }) {
                             </span>
                           </span>
                           <span style={{ whiteSpace: 'nowrap', marginLeft: 12 }}>
-                            {(item.better_value === 'replace' ? item.cost_mid_replace : item.cost_mid_repair) != null
-                              ? fmt(item.better_value === 'replace' ? item.cost_mid_replace : item.cost_mid_repair)
-                              : fmtRange(
-                                  item.better_value === 'replace' ? item.replace_low  : item.repair_low,
-                                  item.better_value === 'replace' ? item.replace_high : item.repair_high
-                                )}
+                            <CostCell
+                              item={item}
+                              customCosts={customCosts}
+                              editingCost={editingCost}
+                              setEditingCost={setEditingCost}
+                              onCostSave={commitItemCost}
+                            />
                           </span>
                         </div>
                       ))}
@@ -880,12 +982,13 @@ export default function ResultsStep({ sessionId }) {
                             </span>
                           </span>
                           <span style={{ whiteSpace: 'nowrap', marginLeft: 12 }}>
-                            {(item.better_value === 'replace' ? item.cost_mid_replace : item.cost_mid_repair) != null
-                              ? fmt(item.better_value === 'replace' ? item.cost_mid_replace : item.cost_mid_repair)
-                              : fmtRange(
-                                  item.better_value === 'replace' ? item.replace_low  : item.repair_low,
-                                  item.better_value === 'replace' ? item.replace_high : item.repair_high
-                                )}
+                            <CostCell
+                              item={item}
+                              customCosts={customCosts}
+                              editingCost={editingCost}
+                              setEditingCost={setEditingCost}
+                              onCostSave={commitItemCost}
+                            />
                           </span>
                         </div>
                       ))}
@@ -935,6 +1038,7 @@ export default function ResultsStep({ sessionId }) {
                       commitOverride={commitOverride}
                       commitGlobal={commitGlobal}
                       grossPrice={net.gross_sale_price}
+                      resetAllItemCosts={resetAllItemCosts}
                     />
                   ))}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10,
