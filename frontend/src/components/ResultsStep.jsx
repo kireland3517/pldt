@@ -259,6 +259,19 @@ const PER_PLAN_KEYS = new Set([
   'hoa_estoppel', 'repair_cost', 'concessions', 'carrying_cost',
 ])
 
+// Bug 3 fix (Stage 2 Step 2 bugfix round): mortgage_payoff, seller_credits,
+// and other_seller_costs are GLOBAL FACTS in net_proceeds.py — calculated_amount
+// is always 0.0 for these (the engine has no way to derive them) and
+// override_amount always carries the actual stored value whenever it's
+// nonzero. That means override_amount != null does NOT mean "the user
+// changed this from a default" for these three keys, it just means "this
+// fact currently has a value." Treating them as "edited" mislabels every
+// normal session and, worse, would offer a reset that wipes a real payoff
+// to $0 as if it were an accidental edit. Exclude them from the
+// edited/reset styling entirely — only commission (has a real calculated
+// default) and the per-plan lines (have a real calculated baseline) use it.
+const GLOBAL_FACT_KEYS = new Set(['mortgage_payoff', 'seller_credits', 'other_seller_costs'])
+
 function NetLineRow({
   li, planLevel, editingLine, setEditingLine,
   commission, setCommission, commissionRef,
@@ -268,7 +281,7 @@ function NetLineRow({
   payoffOther, setPayoffOther,
   saving, commitOverride, commitGlobal, grossPrice,
 }) {
-  const isEdited = li.override_amount != null
+  const isEdited = li.override_amount != null && !GLOBAL_FACT_KEYS.has(li.key)
   const editable = PER_PLAN_KEYS.has(li.key) || li.key === 'commission' || li.key === 'mortgage_payoff'
 
   const labelEl = (
@@ -529,11 +542,17 @@ export default function ResultsStep({ sessionId }) {
   }
 
   async function commitGlobal(patch) {
+    // Bug 2 fix (Stage 2 Step 2 bugfix round): PATCH /inputs now supports
+    // return_result=true, returning the full recomputed shape (same as
+    // PATCH /overrides) instead of just {ok}. That lets us setResult() in
+    // place here, exactly like commitOverride, with no load()/getCompute()
+    // round trip. load()'s setLoading(true) was the source of the full-page
+    // "Computing results..." flash on every commission/payoff edit.
     setSaving(true)
     setEditError(null)
     try {
-      await updateInputs(sessionId, patch)
-      await load(true)
+      const r = await updateInputs(sessionId, { ...patch, return_result: true })
+      setResult(r)
       setCustomItems(null)
       setCustomCosts({})
     } catch (err) {

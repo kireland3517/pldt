@@ -3,6 +3,8 @@ compute.py — run the full logic chain and expose results.
 
 GET  /session/{id}/compute          Run chain (cached); return full result.
 PATCH /session/{id}/inputs          Update seller inputs; invalidate cache.
+                                     return_result=true also recomputes and
+                                     returns the full result (Stage 2 Step 2).
 PATCH /session/{id}/overrides       Stage 2 Step 1: set/clear a per-plan line
                                      override; returns the recomputed result.
 POST  /session/{id}/reverse         Reverse-goal: find plan that hits target net.
@@ -325,6 +327,13 @@ class InputsUpdate(BaseModel):
     has_hoa: Optional[bool] = None
     listing_month: Optional[int] = None
     seller_inputs: Optional[dict] = None    # merged into existing seller_inputs
+    # Stage 2 Step 2 bugfix (Bug 2): when True, recompute immediately and
+    # return the full result (same shape as PATCH /overrides) instead of
+    # {"ok": True}. Defaults to False so existing lightweight callers (e.g.
+    # PhotoStep's draft-save ping, which fires before capture even exists)
+    # are byte-identical to today's behavior and never pay for a recompute
+    # they don't need and, before capture, can't safely run.
+    return_result: bool = False
 
 
 @router.patch("/{session_id}/inputs")
@@ -336,6 +345,13 @@ def update_inputs(session_id: str, body: InputsUpdate):
     GLOBAL overrides live here: commission_rate and seller_inputs
     (mortgage_payoff, seller_credits, other_seller_costs) apply identically
     to all three plans. Per-plan line overrides go through PATCH /overrides.
+
+    return_result=True additionally recomputes immediately and returns the
+    full result, mirroring PATCH /overrides — this is what lets the frontend
+    update the price-to-net panel in place instead of a full page reload.
+    Only takes effect when the session already has capture data
+    (instance_json); this is a defensive fallback, not the primary gate —
+    callers that patch inputs before capture never set this flag at all.
     """
     db = get_db()
 
@@ -357,7 +373,29 @@ def update_inputs(session_id: str, body: InputsUpdate):
         patch["seller_inputs"] = {**existing, **body.seller_inputs}
 
     db.table(TABLE).update(patch).eq("id", session_id).execute()
-    return {"ok": True, "session_id": session_id}
+
+    if not body.return_result or not session.get("instance_json"):
+        return {"ok": True, "session_id": session_id}
+
+    ref = _get_ref()
+    session = {**session, **patch}
+    session = _ensure_attom_fetched(session, db, session_id)
+    session = _retry_failed_list_prices(session, db, session_id)
+    result = _run_chain(session, ref)
+
+    db.table(TABLE).update({
+        "compute_result": result,
+        "status": "compute",
+    }).eq("id", session_id).execute()
+
+    return {
+        "session_id":      session_id,
+        "address":         session.get("address", ""),
+        "commission_rate": session.get("commission_rate", 0.06),
+        "seller_inputs":   session.get("seller_inputs") or {},
+        "line_overrides":  session.get("line_overrides_json") or {},
+        **result,
+    }
 
 
 class OverrideUpdate(BaseModel):
