@@ -852,9 +852,12 @@ export default function ResultsStep({ sessionId }) {
                             </span>
                           </span>
                           <span style={{ whiteSpace: 'nowrap', marginLeft: 12 }}>
-                            {item.cost_mid != null
-                              ? fmt(item.cost_mid)
-                              : fmtRange(item.cost_low, item.cost_high)}
+                            {(item.better_value === 'replace' ? item.cost_mid_replace : item.cost_mid_repair) != null
+                              ? fmt(item.better_value === 'replace' ? item.cost_mid_replace : item.cost_mid_repair)
+                              : fmtRange(
+                                  item.better_value === 'replace' ? item.replace_low  : item.repair_low,
+                                  item.better_value === 'replace' ? item.replace_high : item.repair_high
+                                )}
                           </span>
                         </div>
                       ))}
@@ -877,9 +880,12 @@ export default function ResultsStep({ sessionId }) {
                             </span>
                           </span>
                           <span style={{ whiteSpace: 'nowrap', marginLeft: 12 }}>
-                            {item.cost_mid != null
-                              ? fmt(item.cost_mid)
-                              : fmtRange(item.cost_low, item.cost_high)}
+                            {(item.better_value === 'replace' ? item.cost_mid_replace : item.cost_mid_repair) != null
+                              ? fmt(item.better_value === 'replace' ? item.cost_mid_replace : item.cost_mid_repair)
+                              : fmtRange(
+                                  item.better_value === 'replace' ? item.replace_low  : item.repair_low,
+                                  item.better_value === 'replace' ? item.replace_high : item.repair_high
+                                )}
                           </span>
                         </div>
                       ))}
