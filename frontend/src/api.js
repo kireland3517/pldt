@@ -157,3 +157,20 @@ export async function downloadLargePdf(sessionId, { planKey, customItems, custom
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }
+
+export async function getCustomPlan(sessionId, { itemIds, itemCostOverrides, addedItems }) {
+  // Stage 2 Step 3: run an arbitrary checked-item set through the proven
+  // backend engine. Stateless -- every call sends the full current
+  // selection; the response is rendered as-is, never recomputed client-side.
+  const res = await fetch(`${BASE}/session/${sessionId}/custom-plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      item_ids:             itemIds || [],
+      item_cost_overrides:  itemCostOverrides || {},
+      added_items:          (addedItems || []).map(i => ({ label: i.label, cost: i.cost })),
+    }),
+  })
+  if (!res.ok) throw new Error((await json(res)).detail || res.statusText)
+  return json(res)
+}

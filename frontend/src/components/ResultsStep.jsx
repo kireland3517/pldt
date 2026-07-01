@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { getCompute, updateInputs, updateOverride, downloadPdf, downloadLargePdf, refetchMarketData } from '../api'
+import { getCompute, updateInputs, updateOverride, downloadPdf, downloadLargePdf, refetchMarketData, getCustomPlan } from '../api'
 
 
 // ── Tooltip copy ─────────────────────────────────────────────────────────────
@@ -281,7 +281,7 @@ function NetLineRow({
   payoffSecondary, setPayoffSecondary,
   payoffOther, setPayoffOther,
   saving, commitOverride, commitGlobal, grossPrice,
-  resetAllItemCosts,
+  resetAllItemCosts, readOnly = false,
 }) {
   const isEdited = li.override_amount != null && !GLOBAL_FACT_KEYS.has(li.key)
   const editable = PER_PLAN_KEYS.has(li.key) || li.key === 'commission' || li.key === 'mortgage_payoff'
@@ -426,6 +426,15 @@ function NetLineRow({
 
   // ── Per-plan overridable lines: click to edit, commit on blur/Enter ──
   if (PER_PLAN_KEYS.has(li.key) && li.key !== 'repair_cost') {
+    if (readOnly) {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'space-between',
+                      fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
+          {labelEl}
+          <span>({fmt(li.amount)})</span>
+        </div>
+      )
+    }
     if (editingLine === li.key) {
       return (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
@@ -493,6 +502,20 @@ export default function ResultsStep({ sessionId }) {
   const [payoffOpen,      setPayoffOpen]      = useState(false)  // payoff sub-field panel expanded
   const commissionRef = useRef(commission)
 
+  // ── Stage 2 Step 3: Custom tab -- item-set-driven, calls /custom-plan.
+  // Deliberately separate from customItems/customCosts above (those feed the
+  // standard-tab PDF download machinery and must not be touched here).
+  const [customCheckedIds,    setCustomCheckedIds]    = useState(null)   // Set|null; null = not seeded yet
+  const [customCostOverrides, setCustomCostOverrides] = useState({})    // {cid: number}
+  const [customAddedItems,    setCustomAddedItems]    = useState([])    // [{label, cost}]
+  const [customPlan,          setCustomPlan]          = useState(null)  // last good /custom-plan response
+  const [customLoading,       setCustomLoading]       = useState(false) // true only before first result
+  const [customRecalculating, setCustomRecalculating] = useState(false)
+  const [customError,         setCustomError]         = useState(null)
+  const [newItemLabel,        setNewItemLabel]        = useState('')
+  const [newItemCost,         setNewItemCost]         = useState('')
+  const customSeqRef = useRef(0)
+
   const payoffTotal = payoffPrimary + payoffSecondary + payoffOther
 
   async function handleRefetchMarket() {
@@ -547,6 +570,78 @@ export default function ResultsStep({ sessionId }) {
   // Reset custom items + any line-edit error when plan tab changes
   useEffect(() => { setCustomItems(null); setEditError(null) }, [selectedPlan])
 
+  // Seed the Custom checked-set from Recommended's included_items exactly
+  // once. recommended.included_items already contains floor + qualifying
+  // optional items (optimizer.py::_items_for_level), so this single
+  // assignment reproduces Recommended exactly on first open. Never re-seeds
+  // on a later tab switch -- the user's edits persist across tabs. Reads
+  // `result` directly (not the later `plans` const) so this hook can sit
+  // above the component's early-return guards without violating the Rules
+  // of Hooks.
+  useEffect(() => {
+    const recommendedIds = result?.plans?.recommended?.included_items
+    if (customCheckedIds === null && recommendedIds) {
+      setCustomCheckedIds(new Set(recommendedIds))
+    }
+  }, [result, customCheckedIds])
+
+  async function runCustomPlan() {
+    if (!customCheckedIds) return
+    const seq = ++customSeqRef.current
+    if (!customPlan) setCustomLoading(true)
+    else setCustomRecalculating(true)
+    try {
+      const r = await getCustomPlan(sessionId, {
+        itemIds:           [...customCheckedIds],
+        itemCostOverrides: customCostOverrides,
+        addedItems:        customAddedItems,
+      })
+      if (seq !== customSeqRef.current) return   // a newer request already landed
+      setCustomPlan(r.plan)
+      setCustomError(null)
+    } catch (err) {
+      if (seq !== customSeqRef.current) return
+      setCustomError(err.message)
+    } finally {
+      if (seq === customSeqRef.current) { setCustomLoading(false); setCustomRecalculating(false) }
+    }
+  }
+
+  useEffect(() => {
+    if (selectedPlan !== 'custom' || !customCheckedIds) return
+    runCustomPlan()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPlan, customCheckedIds, customCostOverrides, customAddedItems])
+
+  function toggleCustomItem(cid) {
+    setCustomCheckedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(cid)) next.delete(cid); else next.add(cid)
+      return next
+    })
+  }
+
+  function commitCustomItemCost(cid, rawVal) {
+    const n = parseFloat(rawVal)
+    setCustomCostOverrides(prev => {
+      const next = { ...prev }
+      if (!isNaN(n) && n > 0) next[cid] = n; else delete next[cid]
+      return next
+    })
+  }
+
+  function addCustomItem() {
+    const cost = parseFloat(newItemCost)
+    if (!newItemLabel.trim() || isNaN(cost) || cost <= 0) return
+    setCustomAddedItems(prev => [...prev, { label: newItemLabel.trim(), cost }])
+    setNewItemLabel('')
+    setNewItemCost('')
+  }
+
+  function removeCustomAddedItem(idx) {
+    setCustomAddedItems(prev => prev.filter((_, i) => i !== idx))
+  }
+
   // Stage 2 Step 2 — commit handlers for inline price-to-net edits.
   // On failure, `result` is left untouched (no setResult / no load() call),
   // so the displayed net never goes half-updated or stale. The error shows
@@ -579,6 +674,13 @@ export default function ResultsStep({ sessionId }) {
       setResult(r)
       setCustomItems(null)
       setCustomCosts({})
+      // Custom's source of truth is customPlan from /custom-plan, not `result`
+      // -- a global edit (commission, payoff) must re-run /custom-plan so the
+      // returned plan reflects the new session-level value. Do NOT call
+      // load(true) here; that reloads the standard three-plan result instead.
+      if (selectedPlan === 'custom') {
+        await runCustomPlan()
+      }
     } catch (err) {
       setEditError(err.message)
     } finally {
@@ -880,12 +982,257 @@ export default function ResultsStep({ sessionId }) {
             </button>
           ))}
         </div>
-        {selectedPlan === 'custom' ? (
-          <div style={{ padding: '20px 0', color: '#6b7280', fontSize: 13 }}>
-            <strong style={{ color: '#374151' }}>Custom plan builder coming in a future update.</strong>
-            {' '}Switch to Leaner, Recommended, or Do Everything to compare paths.
-          </div>
-        ) : (() => {
+        {selectedPlan === 'custom' ? (() => {
+          const p = customPlan
+          const doEverythingIds = new Set(plans.do_everything?.included_items || [])
+          const reqRows = repair.filter(item => floorIds.has(item.component_id))
+          const optRows = repair.filter(
+            item => !floorIds.has(item.component_id) && doEverythingIds.has(item.component_id)
+          )
+
+          if (customLoading || !p) {
+            return <p style={{ fontSize: 13, color: '#6b7280', padding: '20px 0' }}>Loading custom plan…</p>
+          }
+          if (customError && !p) {
+            return <p style={{ fontSize: 13, color: 'red', padding: '20px 0' }}>Error: {customError}</p>
+          }
+
+          const isNeg = (p.net_proceeds?.net_proceeds ?? 0) < 0
+          const checkedOptCount = optRows.filter(r => customCheckedIds?.has(r.component_id)).length
+
+          return (
+            <div style={{ opacity: customRecalculating ? 0.6 : 1, transition: 'opacity 0.15s' }}>
+              {customRecalculating && (
+                <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 6 }}>recalculating…</div>
+              )}
+              {customError && (
+                <div style={{ fontSize: 12, color: '#c00', marginBottom: 8 }}>{customError}</div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between',
+                            alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 3 }}>Custom</div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>
+                    Build your own plan — required items are checked but can be unchecked.
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 2 }}>
+                    Suggested listing price (estimate)
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 500, marginBottom: 2 }}>
+                    {fmt(p.adjusted_sale_price)}
+                  </div>
+                  {p.value_lift_capped > 0 && (
+                    <div style={{ fontSize: 11, color: '#1a7f37' }}>
+                      +{fmt(p.value_lift_capped)} est. value lift
+                      {p.value_lift_cap_binding && (
+                        <span style={{ marginLeft: 4, color: '#b45309' }}>
+                          ⚑ capped<Tip id="valueLiftCapped" />
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+                {reqRows.length} required + {checkedOptCount} of {optRows.length} optional checked
+                {p.plan_roi_pct != null && (
+                  <span style={{ marginLeft: 10, color: p.plan_roi_pct >= 0 ? '#1a7f37' : '#c00' }}>
+                    ROI: {p.plan_roi_pct > 0 ? '+' : ''}{p.plan_roi_pct}%<Tip id="planROI" />
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                {/* Left: checkable item lists */}
+                <div style={{ flex: '1 1 260px', minWidth: 200 }}>
+                  {reqRows.length > 0 && (
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ fontWeight: 500, fontSize: 12, color: '#7c2d12', marginBottom: 6,
+                                    background: '#fef3c7', padding: '4px 8px', borderRadius: 4 }}>
+                        Required to sell ({reqRows.length})
+                      </div>
+                      {reqRows.map((item, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                              fontSize: 12, padding: '4px 0',
+                                              borderBottom: '1px solid #f3f4f6' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <input type="checkbox"
+                              checked={customCheckedIds?.has(item.component_id) ?? false}
+                              onChange={() => toggleCustomItem(item.component_id)} />
+                            {item.display_name}
+                            <span style={{ color: '#9ca3af' }}>
+                              — {PATH_LABELS[item.better_value] || item.better_value}
+                            </span>
+                          </span>
+                          <span style={{ whiteSpace: 'nowrap', marginLeft: 12 }}>
+                            <CostCell
+                              item={item}
+                              customCosts={customCostOverrides}
+                              editingCost={editingCost}
+                              setEditingCost={setEditingCost}
+                              onCostSave={commitCustomItemCost}
+                            />
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {optRows.length > 0 && (
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: 12, color: '#065f46', marginBottom: 6,
+                                    background: '#d1fae5', padding: '4px 8px', borderRadius: 4 }}>
+                        Optional ({optRows.length})
+                      </div>
+                      {optRows.map((item, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                              fontSize: 12, padding: '4px 0',
+                                              borderBottom: '1px solid #f3f4f6' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <input type="checkbox"
+                              checked={customCheckedIds?.has(item.component_id) ?? false}
+                              onChange={() => toggleCustomItem(item.component_id)} />
+                            {item.display_name}
+                            <span style={{ color: '#9ca3af' }}>
+                              — {PATH_LABELS[item.better_value] || item.better_value}
+                            </span>
+                          </span>
+                          <span style={{ whiteSpace: 'nowrap', marginLeft: 12 }}>
+                            <CostCell
+                              item={item}
+                              customCosts={customCostOverrides}
+                              editingCost={editingCost}
+                              setEditingCost={setEditingCost}
+                              onCostSave={commitCustomItemCost}
+                            />
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {reqRows.length === 0 && optRows.length === 0 && (
+                    <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 0 }}>
+                      No repair items detected.
+                    </p>
+                  )}
+
+                  {/* Add-your-own item -- cost-only, never affects value lift */}
+                  <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid #e5e7eb' }}>
+                    <div style={{ fontWeight: 500, fontSize: 12, color: '#374151', marginBottom: 6 }}>
+                      Add an item the tool didn't detect
+                    </div>
+                    {customAddedItems.map((it, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
+                                            fontSize: 12, padding: '4px 0',
+                                            borderBottom: '1px solid #f3f4f6' }}>
+                        <span>{it.label}</span>
+                        <span>
+                          {fmt(it.cost)}
+                          <button onClick={() => removeCustomAddedItem(i)}
+                            style={{ marginLeft: 8, border: 'none', background: 'none',
+                                     color: '#c00', cursor: 'pointer', fontSize: 12 }}>
+                            ✕
+                          </button>
+                        </span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                      <input placeholder="Description" value={newItemLabel}
+                        onChange={e => setNewItemLabel(e.target.value)}
+                        style={{ fontSize: 12, padding: '3px 6px', flex: 1, minWidth: 100 }} />
+                      <input type="number" placeholder="Cost" value={newItemCost}
+                        onChange={e => setNewItemCost(e.target.value)}
+                        style={{ fontSize: 12, padding: '3px 6px', width: 80 }} />
+                      <button onClick={addCustomItem}
+                        style={{ fontSize: 12, padding: '3px 10px', cursor: 'pointer',
+                                 border: '1px solid #ccc', borderRadius: 3, background: '#f9f9f9' }}>
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: price-to-net chain (closing-cost lines read-only on Custom) */}
+                <div style={{ flex: '0 1 260px', minWidth: 200, background: '#f9fafb',
+                              borderRadius: 8, padding: '14px 16px', border: '0.5px solid #e5e7eb' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                fontWeight: 500, fontSize: 12, marginBottom: 10, color: '#374151' }}>
+                    <span>Price to net</span>
+                    {saving && <span style={{ fontSize: 10, color: '#9ca3af', fontWeight: 400 }}>saving…</span>}
+                  </div>
+                  {editError && (
+                    <div style={{ fontSize: 11, color: '#c00', marginBottom: 8 }}>{editError}</div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between',
+                                marginBottom: 10, fontSize: 13 }}>
+                    <span>Listing price</span>
+                    <span style={{ fontWeight: 500 }}>{fmt(p.adjusted_sale_price)}</span>
+                  </div>
+                  {(p.net_proceeds?.line_items || []).map((li, i) => (
+                    <NetLineRow
+                      key={li.key || i}
+                      li={li}
+                      planLevel="custom"
+                      readOnly={PER_PLAN_KEYS.has(li.key)}
+                      editingLine={editingLine}
+                      setEditingLine={setEditingLine}
+                      commission={commission}
+                      setCommission={setCommission}
+                      commissionRef={commissionRef}
+                      payoffOpen={payoffOpen}
+                      setPayoffOpen={setPayoffOpen}
+                      payoffPrimary={payoffPrimary}
+                      setPayoffPrimary={setPayoffPrimary}
+                      payoffSecondary={payoffSecondary}
+                      setPayoffSecondary={setPayoffSecondary}
+                      payoffOther={payoffOther}
+                      setPayoffOther={setPayoffOther}
+                      saving={saving}
+                      commitOverride={commitOverride}
+                      commitGlobal={commitGlobal}
+                      grossPrice={p.net_proceeds?.gross_sale_price}
+                      resetAllItemCosts={resetAllItemCosts}
+                    />
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10,
+                                paddingTop: 10, borderTop: '1px solid #d1d5db',
+                                fontWeight: 500, fontSize: 13 }}>
+                    <span>Est. net proceeds</span>
+                    <span style={{ color: isNeg ? '#c00' : '#1a7f37' }}>{fmt(p.net_proceeds?.net_proceeds)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Custom's own lender-gate note -- backend already frames retail vs. investor pricing */}
+              {p.lender_gate?.note && (
+                <div style={{ marginTop: 16, padding: 14, border: '1px solid #f0c040',
+                              background: '#fffbe6', borderRadius: 6 }}>
+                  <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6, color: '#7a5c00' }}>
+                    A required item is unchecked
+                  </div>
+                  <p style={{ fontSize: 12, color: '#4b5563', margin: '0 0 10px', lineHeight: 1.5 }}>
+                    {p.lender_gate.note}
+                  </p>
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: 150 }}>
+                      <div style={{ fontSize: 11, color: '#166534' }}>If repaired: retail price</div>
+                      <div style={{ fontSize: 15, fontWeight: 500, color: '#15803d' }}>
+                        {fmt(p.lender_gate.retail_price)}
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 150 }}>
+                      <div style={{ fontSize: 11, color: '#6b7280' }}>As left: investor price</div>
+                      <div style={{ fontSize: 15, fontWeight: 500, color: '#374151' }}>
+                        ~{fmt(p.lender_gate.investor_price)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {/* DOM omitted -- endpoint returns null for Custom, never fabricated */}
+            </div>
+          )
+        })() : (() => {
           const p        = plans[selectedPlan] || {}
           const net      = p.net_proceeds || {}
           const planIds  = new Set((p.included_items || []).map(
