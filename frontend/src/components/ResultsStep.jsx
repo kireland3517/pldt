@@ -1092,6 +1092,13 @@ export default function ResultsStep({ sessionId }) {
                       ))}
                     </div>
                   )}
+                  {anyRequiredUnchecked && (
+                    <div style={{ marginBottom: 14, padding: 12, border: '1px solid #dc2626',
+                                  background: '#fef2f2', borderRadius: 6, fontSize: 12, color: '#991b1b' }}>
+                      You've unchecked a required-to-sell item. Skipping required repairs can
+                      make your home harder — or impossible — to sell to a typical buyer.
+                    </div>
+                  )}
                   {optRows.length > 0 && (
                     <div>
                       <div style={{ fontWeight: 500, fontSize: 12, color: '#065f46', marginBottom: 6,
@@ -1255,18 +1262,6 @@ export default function ResultsStep({ sessionId }) {
                   </div>
                 </div>
               </div>
-
-              {/* Item 1: frontend-only caution -- fires whenever ANY required (floor)
-                  item is unchecked on Custom, regardless of backend lender_gate. Layered
-                  with (not replacing) the detailed box below, which only renders when the
-                  backend actually returns lender_gate.note (major/investor-cap items only). */}
-              {anyRequiredUnchecked && (
-                <div style={{ marginTop: 16, padding: 12, border: '1px solid #dc2626',
-                              background: '#fef2f2', borderRadius: 6, fontSize: 12, color: '#991b1b' }}>
-                  You've unchecked a required-to-sell item. Skipping required repairs can
-                  make your home harder — or impossible — to sell to a typical buyer.
-                </div>
-              )}
 
               {/* Custom's own lender-gate note -- backend already frames retail vs. investor pricing */}
               {p.lender_gate?.note && (
