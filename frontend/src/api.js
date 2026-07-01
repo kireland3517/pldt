@@ -86,6 +86,18 @@ export async function updateInputs(sessionId, patch) {
   return json(res)
 }
 
+export async function updateOverride(sessionId, planLevel, lineKey, amount) {
+  // Stage 2 Step 2: set or clear a single per-plan line override.
+  // amount = null clears the override (reverts to calculated_amount).
+  const res = await fetch(`${BASE}/session/${sessionId}/overrides`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_level: planLevel, line_key: lineKey, amount }),
+  })
+  if (!res.ok) throw new Error((await json(res)).detail || res.statusText)
+  return json(res)
+}
+
 export async function listSessions(limit = 20) {
   const res = await fetch(`${BASE}/session?limit=${limit}`)
   if (!res.ok) throw new Error(res.statusText)

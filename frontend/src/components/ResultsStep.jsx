@@ -1,19 +1,19 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { getCompute, updateInputs, downloadPdf, downloadLargePdf, refetchMarketData } from '../api'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { getCompute, updateInputs, updateOverride, downloadPdf, downloadLargePdf, refetchMarketData } from '../api'
 
 
 // ── Tooltip copy ─────────────────────────────────────────────────────────────
 // Exact copy approved by product — do not paraphrase.
 const TIPS = {
-  requiredToSell: "These repairs aren't about making money. Most buyers\u2019 lenders or basic safety rules won\u2019t overlook them, so fixing them is what lets your home sell to a typical buyer at all. They\u2019re in every plan because they aren\u2019t really optional.",
-  enablesSale:    "Fixing this mostly removes a discount a buyer would otherwise demand, rather than adding value on top. Skipping it can lower your price or, for serious issues, cost you buyers whose lender won\u2019t approve the home as-is.",
+  requiredToSell: "These repairs aren't about making money. Most buyers’ lenders or basic safety rules won’t overlook them, so fixing them is what lets your home sell to a typical buyer at all. They’re in every plan because they aren’t really optional.",
+  enablesSale:    "Fixing this mostly removes a discount a buyer would otherwise demand, rather than adding value on top. Skipping it can lower your price or, for serious issues, cost you buyers whose lender won’t approve the home as-is.",
   optionalValue:  "Not required to sell. These are updates that tend to help your home sell better or for more. You choose which are worth it.",
-  valueReturn:    "Roughly how much of this update\u2019s cost typically comes back in your sale price, based on regional cost-vs-value data. Over 100% means it tends to return more than it costs.",
+  valueReturn:    "Roughly how much of this update’s cost typically comes back in your sale price, based on regional cost-vs-value data. Over 100% means it tends to return more than it costs.",
   planROI:        "For every dollar this plan spends on improvements, this is what comes back in sale price. A negative number is normal for plans with required repairs, those exist to make the sale possible, not to profit.",
-  valueLiftCapped:"We limited the projected price to what comparable renovated homes in your area actually sell for. Improvements can\u2019t push your price above what the market supports.",
-  belowROI:       "This item returns less at sale than it costs to do, so it\u2019s not in the recommended plan. You can still add it, but it won\u2019t pay for itself.",
-  getChecked:     "We don\u2019t have enough to estimate this reliably, so the honest move is to have a professional look before deciding, rather than us guessing a cost.",
-  investorPath:   "Homes with this issue usually can\u2019t be bought with a normal mortgage, so they tend to sell to a cash investor for less. Fixing it before listing keeps your home open to all buyers. Selling as-is is a real choice, we\u2019re just showing you the difference.",
+  valueLiftCapped:"We limited the projected price to what comparable renovated homes in your area actually sell for. Improvements can’t push your price above what the market supports.",
+  belowROI:       "This item returns less at sale than it costs to do, so it’s not in the recommended plan. You can still add it, but it won’t pay for itself.",
+  getChecked:     "We don’t have enough to estimate this reliably, so the honest move is to have a professional look before deciding, rather than us guessing a cost.",
+  investorPath:   "Homes with this issue usually can’t be bought with a normal mortgage, so they tend to sell to a cash investor for less. Fixing it before listing keeps your home open to all buyers. Selling as-is is a real choice, we’re just showing you the difference.",
 }
 
 // ── Tooltip component — hover (desktop) + tap (mobile) ───────────────────────
@@ -247,6 +247,192 @@ function CostCell({ item, customCosts, editingCost, setEditingCost, onCostSave }
   )
 }
 
+// ── Stage 2 Step 2: editable price-to-net lines ──────────────────────────────
+// Editable set mirrors backend exactly:
+//   GLOBAL   (PATCH /inputs):    commission_rate, mortgage_payoff
+//   PER-PLAN (PATCH /overrides): _OVERRIDE_LINE_KEYS in compute.py, listed below
+// seller_credits / other_seller_costs stay display-only — no UI ever wrote
+// them and they are not in _OVERRIDE_LINE_KEYS.
+
+const PER_PLAN_KEYS = new Set([
+  'transfer_tax', 'attorney_fee', 'deed_fee', 'cl100',
+  'hoa_estoppel', 'repair_cost', 'concessions', 'carrying_cost',
+])
+
+function NetLineRow({
+  li, planLevel, editingLine, setEditingLine,
+  commission, setCommission, commissionRef,
+  payoffOpen, setPayoffOpen,
+  payoffPrimary, setPayoffPrimary,
+  payoffSecondary, setPayoffSecondary,
+  payoffOther, setPayoffOther,
+  saving, commitOverride, commitGlobal, grossPrice,
+}) {
+  const isEdited = li.override_amount != null
+  const editable = PER_PLAN_KEYS.has(li.key) || li.key === 'commission' || li.key === 'mortgage_payoff'
+
+  const labelEl = (
+    <span style={{ fontStyle: isEdited ? 'italic' : 'normal' }}>
+      − {li.label}
+      {isEdited && (
+        <span style={{ color: '#2563eb', fontSize: 10, marginLeft: 4, fontStyle: 'normal' }}>
+          ● edited
+        </span>
+      )}
+    </span>
+  )
+
+  function resetLine() {
+    if (li.key === 'commission') {
+      // Derive the default rate from the engine's own calculated_amount /
+      // gross_sale_price rather than hard-coding 6% in the frontend, so a
+      // future change to the backend default still resets correctly.
+      const pct = Math.round((li.calculated_amount / grossPrice) * 1000) / 10
+      setCommission(pct)
+      commissionRef.current = pct
+      commitGlobal({ commission_rate: pct / 100 })
+    } else if (li.key === 'mortgage_payoff') {
+      setPayoffPrimary(0)
+      setPayoffSecondary(0)
+      setPayoffOther(0)
+      commitGlobal({
+        seller_inputs: {
+          mortgage_payoff: 0, payoff_primary: 0, payoff_secondary: 0, payoff_other: 0,
+        },
+      })
+    } else {
+      commitOverride(planLevel, li.key, null)
+    }
+  }
+
+  const resetEl = isEdited && editable && (
+    <button
+      onClick={resetLine}
+      disabled={saving}
+      title="Reset to calculated"
+      style={{
+        border: 'none', background: 'none', cursor: saving ? 'default' : 'pointer',
+        color: '#9ca3af', fontSize: 12, marginLeft: 4, padding: 0,
+      }}
+    >↺</button>
+  )
+
+  // ── Commission: dollar line + slider, recomputes on release ──
+  if (li.key === 'commission') {
+    return (
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7280' }}>
+          {labelEl}
+          <span>({fmt(li.amount)}) {resetEl}</span>
+        </div>
+        <input
+          type="range" min={1} max={8} step={0.5}
+          value={commission}
+          disabled={saving}
+          onChange={e => {
+            const v = +e.target.value
+            setCommission(v)
+            commissionRef.current = v
+          }}
+          onMouseUp={() => commitGlobal({ commission_rate: commissionRef.current / 100 })}
+          onTouchEnd={() => commitGlobal({ commission_rate: commissionRef.current / 100 })}
+          style={{ width: '100%', marginTop: 2 }}
+        />
+      </div>
+    )
+  }
+
+  // ── Mortgage payoff: dollar line, click to expand 3 sub-fields ──
+  if (li.key === 'mortgage_payoff') {
+    return (
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7280' }}>
+          {labelEl}
+          <span>
+            <span
+              onClick={() => setPayoffOpen(v => !v)}
+              title="Click to edit"
+              style={{ cursor: 'pointer', textDecorationLine: 'underline', textDecorationStyle: 'dotted' }}
+            >
+              ({fmt(li.amount)})
+            </span> {resetEl}
+          </span>
+        </div>
+        {payoffOpen && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+            {[
+              { label: 'Primary',      val: payoffPrimary,   set: setPayoffPrimary },
+              { label: 'Second/HELOC', val: payoffSecondary, set: setPayoffSecondary },
+              { label: 'Liens/other',  val: payoffOther,     set: setPayoffOther },
+            ].map(({ label, val, set }) => (
+              <input
+                key={label} type="number" min={0} step={1000} value={val}
+                placeholder={label}
+                disabled={saving}
+                onChange={e => set(+e.target.value || 0)}
+                onBlur={() => commitGlobal({
+                  seller_inputs: {
+                    mortgage_payoff:  payoffPrimary + payoffSecondary + payoffOther,
+                    payoff_primary:   payoffPrimary,
+                    payoff_secondary: payoffSecondary,
+                    payoff_other:     payoffOther,
+                  },
+                })}
+                style={{ width: 90, fontSize: 11, padding: '2px 4px' }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── Per-plan overridable lines: click to edit, commit on blur/Enter ──
+  if (PER_PLAN_KEYS.has(li.key)) {
+    if (editingLine === li.key) {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+          {labelEl}
+          <input
+            type="number" defaultValue={li.amount} autoFocus
+            style={{ width: 80, fontSize: 12, padding: '1px 4px' }}
+            onBlur={e => {
+              const n = parseFloat(e.target.value)
+              setEditingLine(null)
+              if (!isNaN(n) && n >= 0) commitOverride(planLevel, li.key, n)
+            }}
+            onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+          />
+        </div>
+      )
+    }
+    return (
+      <div style={{ display: 'flex', justifyContent: 'space-between',
+                    fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
+        {labelEl}
+        <span>
+          <span
+            onClick={() => setEditingLine(li.key)}
+            title="Click to enter your own amount"
+            style={{ cursor: 'pointer', textDecorationLine: 'underline', textDecorationStyle: 'dotted' }}
+          >
+            ({fmt(li.amount)})
+          </span> {resetEl}
+        </span>
+      </div>
+    )
+  }
+
+  // ── seller_credits / other_seller_costs: display only, not editable in Step 2 ──
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between',
+                  fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
+      {labelEl}
+      <span>({fmt(li.amount)})</span>
+    </div>
+  )
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function ResultsStep({ sessionId }) {
@@ -257,14 +443,18 @@ export default function ResultsStep({ sessionId }) {
   const [payoffPrimary,   setPayoffPrimary]   = useState(0)
   const [payoffSecondary, setPayoffSecondary] = useState(0)
   const [payoffOther,     setPayoffOther]     = useState(0)
-  const [knobDirty,       setKnobDirty]       = useState(false)
-  const [applying,        setApplying]        = useState(false)
   const [selectedPlan,    setSelectedPlan]    = useState('recommended')
   // Live plan builder state
   const [customItems,     setCustomItems]     = useState(null)   // null = use plan defaults
   const [customCosts,     setCustomCosts]     = useState({})     // cid -> number
   const [editingCost,     setEditingCost]     = useState(null)   // cid | null
   const [refetching,      setRefetching]      = useState(false)
+  // Stage 2 Step 2 — price-to-net line editing state
+  const [saving,          setSaving]          = useState(false)
+  const [editError,       setEditError]       = useState(null)
+  const [editingLine,     setEditingLine]     = useState(null)   // line key being typed into
+  const [payoffOpen,      setPayoffOpen]      = useState(false)  // payoff sub-field panel expanded
+  const commissionRef = useRef(commission)
 
   const payoffTotal = payoffPrimary + payoffSecondary + payoffOther
 
@@ -293,7 +483,11 @@ export default function ResultsStep({ sessionId }) {
       }
       setResult(r)
       if (!refresh) {
-        if (r.commission_rate) setCommission(Math.round(r.commission_rate * 100 * 10) / 10)
+        if (r.commission_rate) {
+          const pct = Math.round(r.commission_rate * 100 * 10) / 10
+          setCommission(pct)
+          commissionRef.current = pct
+        }
         const si = r.seller_inputs || {}
         if (si.payoff_primary != null) {
           setPayoffPrimary(si.payoff_primary)
@@ -313,29 +507,39 @@ export default function ResultsStep({ sessionId }) {
   useEffect(() => { load() }, [load])
 
 
-  // Reset custom items when plan tab changes
-  useEffect(() => { setCustomItems(null) }, [selectedPlan])
+  // Reset custom items + any line-edit error when plan tab changes
+  useEffect(() => { setCustomItems(null); setEditError(null) }, [selectedPlan])
 
-  async function applyKnobs() {
-    setApplying(true)
+  // Stage 2 Step 2 — commit handlers for inline price-to-net edits.
+  // On failure, `result` is left untouched (no setResult / no load() call),
+  // so the displayed net never goes half-updated or stale. The error shows
+  // inline near the "Price to net" header via editError — never through the
+  // page-level error state, which would otherwise blank the whole results view.
+  async function commitOverride(planLevel, lineKey, amount) {
+    setSaving(true)
+    setEditError(null)
     try {
-      await updateInputs(sessionId, {
-        commission_rate: commission / 100,
-        seller_inputs: {
-          mortgage_payoff:  payoffTotal,
-          payoff_primary:   payoffPrimary,
-          payoff_secondary: payoffSecondary,
-          payoff_other:     payoffOther,
-        },
-      })
+      const r = await updateOverride(sessionId, planLevel, lineKey, amount)
+      setResult(r)
+    } catch (err) {
+      setEditError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function commitGlobal(patch) {
+    setSaving(true)
+    setEditError(null)
+    try {
+      await updateInputs(sessionId, patch)
       await load(true)
-      setKnobDirty(false)
       setCustomItems(null)
       setCustomCosts({})
     } catch (err) {
-      setError(err.message)
+      setEditError(err.message)
     } finally {
-      setApplying(false)
+      setSaving(false)
     }
   }
 
@@ -529,7 +733,7 @@ export default function ResultsStep({ sessionId }) {
             and review the required items below to check whether any were flagged in error.
           </p>
           <p style={{ fontSize: 12, color: '#888' }}>
-            Adjust the payoff amount in the "Adjust" section below if the figure isn't accurate.
+            Adjust the payoff amount on the plan card below if the figure isn't accurate.
           </p>
         </section>
       )}
@@ -671,20 +875,42 @@ export default function ResultsStep({ sessionId }) {
                 {/* Right: price-to-net chain */}
                 <div style={{ flex: '0 1 260px', minWidth: 200, background: '#f9fafb',
                               borderRadius: 8, padding: '14px 16px', border: '0.5px solid #e5e7eb' }}>
-                  <div style={{ fontWeight: 500, fontSize: 12, marginBottom: 10, color: '#374151' }}>
-                    Price to net
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                fontWeight: 500, fontSize: 12, marginBottom: 10, color: '#374151' }}>
+                    <span>Price to net</span>
+                    {saving && <span style={{ fontSize: 10, color: '#9ca3af', fontWeight: 400 }}>saving…</span>}
                   </div>
+                  {editError && (
+                    <div style={{ fontSize: 11, color: '#c00', marginBottom: 8 }}>{editError}</div>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'space-between',
                                 marginBottom: 10, fontSize: 13 }}>
                     <span>Listing price</span>
                     <span style={{ fontWeight: 500 }}>{fmt(p.adjusted_sale_price)}</span>
                   </div>
                   {(net.line_items || []).map((li, i) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
-                                          fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
-                      <span>− {li.label}</span>
-                      <span>({fmt(li.amount)})</span>
-                    </div>
+                    <NetLineRow
+                      key={li.key || i}
+                      li={li}
+                      planLevel={selectedPlan}
+                      editingLine={editingLine}
+                      setEditingLine={setEditingLine}
+                      commission={commission}
+                      setCommission={setCommission}
+                      commissionRef={commissionRef}
+                      payoffOpen={payoffOpen}
+                      setPayoffOpen={setPayoffOpen}
+                      payoffPrimary={payoffPrimary}
+                      setPayoffPrimary={setPayoffPrimary}
+                      payoffSecondary={payoffSecondary}
+                      setPayoffSecondary={setPayoffSecondary}
+                      payoffOther={payoffOther}
+                      setPayoffOther={setPayoffOther}
+                      saving={saving}
+                      commitOverride={commitOverride}
+                      commitGlobal={commitGlobal}
+                      grossPrice={net.gross_sale_price}
+                    />
                   ))}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10,
                                 paddingTop: 10, borderTop: '1px solid #d1d5db',
@@ -1058,51 +1284,6 @@ export default function ResultsStep({ sessionId }) {
         <span>{result.address || 'Pre-Listing Decision Report'}</span>
         <span>Pre-Listing Decision Tool</span>
       </div>
-
-      {/* ── Adjust inputs ── */}
-      <section className="no-print" style={sectionStyle}>
-        <h3 style={h3}>Adjust inputs</h3>
-        <p style={noteStyle}>
-          Changing these recalculates the exact net proceeds from the backend.
-          The live estimate above is an approximation — use this for the precise number.
-        </p>
-        <label style={labelStyle}>
-          Commission rate: <strong>{commission}%</strong>
-          <input type="range" min={1} max={8} step={0.5}
-            value={commission}
-            onChange={e => { setCommission(+e.target.value); setKnobDirty(true) }}
-            style={{ marginLeft: 8, verticalAlign: 'middle' }}
-          />
-        </label>
-        <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>
-            Mortgage payoff — total: <strong>{fmt(payoffTotal)}</strong>
-          </div>
-          <p style={{ fontSize: 12, color: '#666', margin: '0 0 8px' }}>
-            Include all balances. Forgetting a HELOC or lien is the most common source of a wrong net number.
-          </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px' }}>
-            {[
-              { label: 'Primary mortgage',              val: payoffPrimary,   set: setPayoffPrimary },
-              { label: 'Second mortgage / HELOC',       val: payoffSecondary, set: setPayoffSecondary },
-              { label: 'Liens, unpaid taxes, or other', val: payoffOther,     set: setPayoffOther },
-            ].map(({ label, val: v, set }) => (
-              <label key={label} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
-                <span>{label}</span>
-                <input type="number" min={0} step={1000} value={v}
-                  onChange={e => { set(+e.target.value); setKnobDirty(true) }}
-                  style={{ width: 140, padding: '3px 6px', fontSize: 13 }} />
-              </label>
-            ))}
-          </div>
-        </div>
-        {knobDirty && (
-          <button style={{ ...btnStyle, marginTop: 10 }} onClick={applyKnobs} disabled={applying}>
-            {applying ? 'Recomputing…' : 'Apply and recompute'}
-          </button>
-        )}
-        {error && <p style={{ color: 'red', fontSize: 13, marginTop: 8 }}>{error}</p>}
-      </section>
     </div>
   )
 }
