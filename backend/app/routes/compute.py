@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Optional
+from typing import Optional, List, Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -26,6 +26,7 @@ from ..logic.recoup import attach_recoup
 from ..logic.floor import compute_floor
 from ..logic.dom import estimate_dom, estimate_carrying_cost
 from ..logic.optimizer import build_plans
+from ..logic.custom_plan import build_custom_plan
 from ..logic.capture import qualify_floor_members
 
 router = APIRouter()
@@ -481,6 +482,74 @@ def update_override(session_id: str, body: OverrideUpdate):
     }
 
 
+class CustomPlanRequest(BaseModel):
+    item_ids: List[str] = []
+    item_cost_overrides: Dict[str, float] = {}
+
+
+@router.post("/{session_id}/custom-plan")
+def custom_plan(session_id: str, body: CustomPlanRequest):
+    """
+    Stage 2 Step 1 -- Custom plan: an arbitrary checked-item set run through
+    the same proven engine as the three standard plans (see
+    app/logic/custom_plan.py for the item-scope decision and guardrails).
+
+    Reuses the session's existing GLOBAL commission_rate / seller_inputs /
+    has_hoa -- no new global inputs accepted here; those still go through
+    PATCH /inputs.
+
+    Does not cache into compute_result and does not overwrite the cached
+    three-plan result -- re-derives enriched_rows/floor/valuation fresh on
+    every call so it can be called on every checkbox toggle without
+    invalidating the three standard plans.
+    """
+    db  = get_db()
+    ref = _get_ref()
+
+    row = db.table(TABLE).select("*").eq("id", session_id).maybe_single().execute()
+    if not row.data:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+
+    session = row.data
+    session = _ensure_attom_fetched(session, db, session_id)
+    session = _retry_failed_list_prices(session, db, session_id)
+
+    instance = session.get("instance_json")
+    if not instance:
+        raise HTTPException(status_code=422, detail="Session has no capture data. POST to /capture first.")
+
+    prop = session.get("property_json") or {}
+    instance = qualify_floor_members(instance, ref)
+    cond_list = build_condition_list(instance, ref, has_inspection=False)
+    repair_rows = build_repair_rows(cond_list)
+    enriched = attach_recoup(repair_rows, ref.library)
+    floor_result = compute_floor(enriched)
+
+    try:
+        val = compute_as_is_range(prop)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Valuation failed: {exc}.")
+
+    seller_inputs   = session.get("seller_inputs") or {}
+    commission_rate = session.get("commission_rate") or 0.06
+    has_hoa         = session.get("has_hoa", False)
+
+    plan = build_custom_plan(
+        enriched_rows=enriched,
+        floor_result=floor_result,
+        valuation=val,
+        closing_constants=ref.sc_closing,
+        seller_inputs=seller_inputs,
+        item_ids=body.item_ids,
+        item_cost_overrides=body.item_cost_overrides,
+        commission_rate=commission_rate,
+        has_hoa=has_hoa,
+    )
+
+    return {
+        "session_id": session_id,
+        "plan": plan,
+    }
 @router.post("/{session_id}/refetch-market-data")
 def refetch_market_data(session_id: str):
     """

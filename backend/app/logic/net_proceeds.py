@@ -389,3 +389,74 @@ def net_for_plan(
     result["plan_level"] = plan_level
     result["dom_days"]   = dom_result["estimated_dom"]
     return result
+
+
+# ---------------------------------------------------------------------------
+# STAGE 2 STEP 1 (additive) — Custom plan repair-cost math
+# ---------------------------------------------------------------------------
+
+def _repair_cost_and_concessions_for_items(
+    enriched_rows: list,
+    floor_result: dict,
+    included_item_ids: set,
+    item_cost_overrides: Optional[dict] = None,
+) -> tuple:
+    """
+    Repair-cost/concessions math for an arbitrary checked-item set. Used by
+    the Custom plan only (app/logic/custom_plan.py).
+
+    Unlike _repair_cost_and_concessions above (which drives leaner/
+    recommended/do_everything and applies a recoup>=75 gate to repair/
+    replace items while including upgrade/credit items unconditionally --
+    see that function's docstring for the documented three-way scope
+    asymmetry between display, value-lift, and repair-cost scopes), Custom
+    uses ONE unified scope: whatever is in included_item_ids is in, full
+    stop. No hidden recoup re-filtering on top of what the user checked.
+
+    Product decision (2026-06-30): a checkbox UI is an explicit user
+    decision. Silently dropping a checked item's cost because its recoup is
+    under 75% would look like a bug, not curation. A checked low-recoup item
+    still contributes its true (positive) value lift and its true (possibly
+    negative) ROI -- see custom_plan.py's guardrail. Nothing here floors or
+    hides that.
+
+    Floor-based, like leaner/recommended (never do_everything's ungated
+    full-resum) -- floor items are always locked-in/required for Custom too,
+    so floor_result["cost_mid"] is always the base and floor rows are always
+    skipped in the per-item sum (already counted in that base).
+
+    item_cost_overrides: optional {component_id: dollar_amount}. When
+    present for a row, substitutes the row's own cost_mid_repair /
+    cost_mid_replace in the REPAIR-COST sum only. Never used for value-lift
+    math -- see optimizer.py's _adjusted_sale_price_for_items, which stays
+    library-anchored on purpose so a seller's own quote can never inflate
+    the projected sale price. custom_plan.py enforces this by never passing
+    item_cost_overrides into that function.
+
+    Returns (repair_cost_mid, concessions_total).
+    """
+    item_cost_overrides = item_cost_overrides or {}
+    concessions_total = 0.0
+    repair_cost_mid = floor_result["cost_mid"]
+
+    for row in enriched_rows:
+        cid = row["component_id"]
+        if row.get("defect_qualifies_floor"):
+            continue  # already counted in floor_result["cost_mid"]
+        if cid not in included_item_ids:
+            continue
+        bv = row.get("better_value")
+        override = item_cost_overrides.get(cid)
+        if bv in ("repair", "replace", "upgrade"):
+            default_mid = (
+                row.get("cost_mid_repair") if bv in ("repair", "upgrade")
+                else row.get("cost_mid_replace")
+            ) or 0
+            mid = override if override is not None else default_mid
+            repair_cost_mid += mid
+        elif bv == "credit":
+            default_mid = row.get("cost_mid_repair") or row.get("cost_mid_replace") or 0
+            mid = override if override is not None else default_mid
+            concessions_total += mid / 2  # credit is typically ~50% of repair
+
+    return repair_cost_mid, concessions_total
