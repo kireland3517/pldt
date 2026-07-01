@@ -445,7 +445,13 @@ function NetLineRow({
             onBlur={e => {
               const n = parseFloat(e.target.value)
               setEditingLine(null)
-              if (!isNaN(n) && n >= 0) commitOverride(planLevel, li.key, n)
+              // Dirty check: only commit if the value actually changed from
+              // what's currently displayed (li.amount -- override if set, else
+              // calculated). Without this, opening a line and blurring away with
+              // no edit re-submits the same number as a "new" override, which
+              // gets stored and mislabeled "edited" even though nothing changed.
+              // Exact compare is fine -- these are cent-precision dollar values.
+              if (!isNaN(n) && n >= 0 && n !== li.amount) commitOverride(planLevel, li.key, n)
             }}
             onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
           />
