@@ -49,6 +49,7 @@ def build_custom_plan(
     commission_rate: Optional[float] = None,
     has_hoa: bool = False,
     overrides: Optional[dict] = None,
+    listing_price_override: Optional[float] = None,
     added_items: Optional[list] = None,
 ) -> dict:
     """
@@ -80,6 +81,25 @@ def build_custom_plan(
     convention. Same anti-inflation principle as library-anchored costs:
     a number the user typed in must never inflate the projected sale price.
 
+    listing_price_override: STEP 1 (Custom-only listing price override,
+    2026-07-01). None (default) means "use the derived price" -- every
+    returned value is byte-identical to pre-Step-1 behavior; proven by
+    backend/tests/test_custom_plan_step1.py, which never passes this arg.
+    A number replaces the PRICE SIDE only: sale_price into
+    compute_net_proceeds, the returned adjusted_sale_price, and the
+    value_lift_capped subtraction. It never touches base_mid
+    (valuation["mid"], the value-lift baseline -- see module docstring on
+    why that must stay anchored to market value) and never touches
+    lender_gate's retail_price / investor_price or the
+    missing-lender-items retail_price_hyp below -- both stay pinned to the
+    COMPUTED adjusted_price on purpose: those are market-reality warnings
+    about the property as repaired, not the seller's listing choice. No
+    ceiling clamp is applied to a typed override, by design. Same
+    three-number shape as net_proceeds.py's override lines
+    (calculated_amount / override_amount / amount): see
+    computed_sale_price / listing_price_override / adjusted_sale_price in
+    the returned dict.
+
     Returns a dict in the same shape as one entry of
     optimizer.build_plans()'s return value (plans["leaner"], etc.), with
     dom=None and carrying=None (not estimated for Custom -- parked decision),
@@ -98,7 +118,20 @@ def build_custom_plan(
     adjusted_price, raw_uplift, cap_was_binding, lender_gate_items, missing_lender_items = (
         _adjusted_sale_price_for_items(base_mid, ceiling, enriched_rows, effective_ids)
     )
-    value_lift_capped = round(adjusted_price - base_mid, 2)
+
+    # STEP 1 (Custom-only listing price override): effective_price replaces
+    # adjusted_price ONLY for sale_price / displayed adjusted_sale_price /
+    # the value-lift subtraction below. adjusted_price itself is left
+    # completely untouched for lender_gate's retail_price/investor_price and
+    # the missing-lender-items hypothetical further down -- both intentionally
+    # stay pinned to the computed price (see docstring). NO ceiling clamp is
+    # applied to a typed override -- a seller can list above the comps
+    # ceiling if they choose to; that's a deliberate product decision, not
+    # an oversight.
+    effective_price = (
+        listing_price_override if listing_price_override is not None else adjusted_price
+    )
+    value_lift_capped = round(effective_price - base_mid, 2)
 
     repair_cost_mid, concessions_total = _repair_cost_and_concessions_for_items(
         enriched_rows, floor_result, effective_ids, item_cost_overrides,
@@ -118,7 +151,7 @@ def build_custom_plan(
     repair_cost_mid += added_items_cost_total
 
     np_result = compute_net_proceeds(
-        sale_price=adjusted_price,
+        sale_price=effective_price,
         closing_constants=closing_constants,
         seller_inputs=seller_inputs,
         plan_repair_cost_mid=repair_cost_mid,
@@ -185,7 +218,9 @@ def build_custom_plan(
 
     return {
         "plan_level":               "custom",
-        "adjusted_sale_price":      round(adjusted_price, 2),
+        "adjusted_sale_price":      round(effective_price, 2),
+        "computed_sale_price":      round(adjusted_price, 2),
+        "listing_price_override":   listing_price_override,
         "as_is_price":              valuation["mid"],
         "improved_listing_ceiling": round(ceiling, 2),
         "value_lift_capped":        value_lift_capped,
